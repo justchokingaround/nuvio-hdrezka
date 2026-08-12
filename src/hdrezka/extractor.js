@@ -307,6 +307,16 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
     const resolved = await resolveTmdbId(tmdbId, mediaType);
     tmdbId = resolved.id;
     mediaType = resolved.mediaType;
+
+    // Prime a Cloudflare/Anubis session. On serverless hosts (Vercel) the
+    // first cold-start request is sometimes rejected until the homepage has
+    // been touched and any challenge cookie has been set.
+    try {
+        await fetchPage(BASE_URL);
+    } catch {
+        // ignore; the real requests below will report their own errors
+    }
+
     const tmdb = await fetchTmdb(tmdbId, mediaType);
     const title = tmdb.title;
     const year = tmdb.year;

@@ -764,6 +764,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
     const resolved = yield resolveTmdbId(tmdbId, mediaType);
     tmdbId = resolved.id;
     mediaType = resolved.mediaType;
+    try {
+      yield fetchPage(BASE_URL);
+    } catch (e) {
+    }
     const tmdb = yield fetchTmdb(tmdbId, mediaType);
     const title = tmdb.title;
     const year = tmdb.year;
