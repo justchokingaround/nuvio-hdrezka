@@ -9,7 +9,7 @@
  */
 
 const { addonBuilder } = require('stremio-addon-sdk');
-const { getStreams } = require('../providers/hdrezka.cjs');
+const { getStreams } = require('./providers/hdrezka.cjs');
 
 const builder = addonBuilder({
     id: 'community.nuvio.hdrezka',

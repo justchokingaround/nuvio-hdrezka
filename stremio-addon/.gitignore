@@ -1,0 +1,4 @@
+node_modules/
+providers/hdrezka.cjs
+.vercel
+*.log
