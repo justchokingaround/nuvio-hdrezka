@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Start the Stremio addon and expose it through a persistent tunnel.
+# Usage:
+#   cp .env.example .env
+#   # fill in .env
+#   ./start-tunnel.sh
+
+set -e
+
+cd "$(dirname "$0")"
+
+PORT="${PORT:-7000}"
+TUNNEL_PROVIDER="${TUNNEL_PROVIDER:-}"
+
+# Load .env if present
+if [ -f .env ]; then
+  # shellcheck disable=SC2046
+  export $(grep -v '^#' .env | xargs)
+fi
+
+if [ -z "$TUNNEL_PROVIDER" ]; then
+  echo "TUNNEL_PROVIDER is not set."
+  echo "Copy .env.example to .env, fill it in, then re-run."
+  exit 1
+fi
+
+# Make sure deps are installed
+if [ ! -d node_modules ]; then
+  echo "Installing addon dependencies..."
+  npm install
+fi
+
+# Make sure the bundled provider exists
+if [ ! -f providers/hdrezka.js ]; then
+  echo "Bundling HDRezka provider..."
+  npm run build
+fi
+
+# Wait for the local addon to answer
+wait_for_addon() {
+  for _ in $(seq 1 30); do
+    if curl -s -o /dev/null "http://127.0.0.1:${PORT}/manifest.json"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Addon did not start on http://127.0.0.1:${PORT}"
+  return 1
+}
+
+# Clean up background jobs on exit
+cleanup() {
+  echo ""
+  echo "Shutting down..."
+  kill "${ADDON_PID:-}" "${TUNNEL_PID:-}" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+trap cleanup EXIT
+
+echo "Starting Stremio addon (http://127.0.0.1:${PORT})..."
+node addon.js &
+ADDON_PID=$!
+wait_for_addon
+
+if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
+  if ! command -v ngrok >/dev/null 2>&1; then
+    echo "ngrok is not installed. Installing via npm..."
+    npm install -g ngrok
+    if ! command -v ngrok >/dev/null 2>&1 && [ -x "$(npm root -g)/bin/ngrok" ]; then
+      export PATH="$(npm root -g)/bin:$PATH"
+    fi
+  fi
+
+  if [ -z "${NGROK_DOMAIN:-}" ]; then
+    echo "NGROK_DOMAIN is not set. See .env.example."
+    exit 1
+  fi
+
+  echo "Starting ngrok tunnel (https://${NGROK_DOMAIN})..."
+  ngrok http "${PORT}" --domain="${NGROK_DOMAIN}" --log=stdout &
+  TUNNEL_PID=$!
+
+elif [ "$TUNNEL_PROVIDER" = "cloudflare" ]; then
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    echo "cloudflared is not installed. Run ./scripts/setup-cloudflare.sh first."
+    exit 1
+  fi
+
+  if [ ! -f cloudflared.yml ]; then
+    echo "cloudflared.yml not found. Run ./scripts/setup-cloudflare.sh first."
+    exit 1
+  fi
+
+  echo "Starting Cloudflare tunnel..."
+  cloudflared tunnel --config cloudflared.yml run &
+  TUNNEL_PID=$!
+
+else
+  echo "Unknown TUNNEL_PROVIDER: $TUNNEL_PROVIDER"
+  exit 1
+fi
+
+echo ""
+echo "=== Your addon will be available at ==="
+if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
+  echo "https://${NGROK_DOMAIN}/manifest.json"
+else
+  grep -E '^\s*hostname:' cloudflared.yml | head -1 | sed 's/.*://;s/ //g' | sed 's|^|https://|;s|$|/manifest.json|'
+fi
+echo "===================================="
+echo "Press Ctrl+C to stop."
+wait

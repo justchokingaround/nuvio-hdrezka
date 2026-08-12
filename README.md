@@ -53,23 +53,35 @@ The console prints two URLs:
 
 In Stremio: **Addons → Add Addon URL** and paste the LAN URL.
 
-### Option B: expose it through a free tunnel (access away from home)
+### Option B: persistent public tunnel (recommended for TV / away from home)
+
+This uses a tunnel so the TV reaches a stable HTTPS URL. The HDRezka scraper still runs from your home network's IP, so it is not blocked.
 
 ```bash
-# Using the same local server as above, then:
-npx ngrok http 7000
+cd stremio-addon
+cp .env.example .env
+# edit .env and set TUNNEL_PROVIDER plus your details
+npm run start:tunnel
 ```
 
-Paste the `https://xxxx.ngrok-free.app/manifest.json` URL into Stremio.
+Two providers are supported:
 
-For a permanent free tunnel with a custom domain you control, use `cloudflared tunnel` instead.
+- **ngrok** (easiest, free static subdomain)
+  - Sign up at https://dashboard.ngrok.com, get your authtoken, run `ngrok config add-authtoken <token>`.
+  - Claim your free static domain in the dashboard and set `NGROK_DOMAIN` in `.env`.
+  - Manifest URL: `https://<your-domain>.ngrok-free.app/manifest.json`
 
-### Option C: one-click Vercel deploy (may be blocked)
+- **Cloudflare Tunnel** (unmetered, but requires a domain you own)
+  - Set `CLOUDFLARE_TUNNEL_HOSTNAME` in `.env` (e.g. `hdrezka.yourdomain.com`).
+  - Run `./scripts/setup-cloudflare.sh` once, then `npm run start:tunnel`.
+  - Manifest URL: `https://<your-hostname>/manifest.json`
+
+### Option C: one-click Vercel deploy (likely blocked)
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fjustchokingaround%2Fnuvio-hdrezka&root-directory=stremio-addon)
 
 After deploying, copy the URL and add `/manifest.json` in Stremio.
-**Caveat:** HDRezka often returns `403` / access-error 105 from Vercel IPs, so streams may fail. If it fails, use Option A or B.
+**Caveat:** HDRezka usually returns `403` / access-error 105 from Vercel/datacenter IPs, so streams may fail. If it fails, use Option A or B.
 
 ## Files
 

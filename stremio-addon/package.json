@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node addon.js",
     "dev": "node addon.js",
+    "start:tunnel": "./start-tunnel.sh",
     "build": "node -e \"require('fs').cpSync('../providers/hdrezka.js','providers/hdrezka.js')\""
   },
   "dependencies": {
