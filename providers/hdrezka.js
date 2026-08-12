@@ -186,6 +186,91 @@ function postForm(_0, _1) {
   });
 }
 
+// src/hdrezka/search.js
+function searchHdrezka(title, originalTitle, year, mediaType) {
+  return __async(this, null, function* () {
+    const seenUrls = /* @__PURE__ */ new Set();
+    const all = [];
+    const baseQueries = [
+      originalTitle,
+      title
+    ].filter(Boolean);
+    const queries = [];
+    for (const q of baseQueries) {
+      queries.push(q);
+      if (year) queries.push(`${q} ${year}`);
+    }
+    for (const query of queries) {
+      const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(query)}`;
+      let html;
+      try {
+        html = yield fetchText(url, {
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": `${BASE_URL}/`
+          }
+        });
+      } catch (e) {
+        console.error(`[HDRezka] search failed for "${query}": ${e.message}`);
+        continue;
+      }
+      for (const c of parseSearchHtml(html)) {
+        if (!seenUrls.has(c.url)) {
+          seenUrls.add(c.url);
+          all.push(c);
+        }
+      }
+    }
+    return rankCandidates(all, { title, originalTitle, year, mediaType });
+  });
+}
+function parseSearchHtml(html) {
+  const candidates = [];
+  const re = /<a href="([^"]+)"><span class="enty">([^<]+)<\/span>[^<]*?\(([^)]+)\)/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const itemUrl = m[1];
+    const itemTitle = m[2].trim();
+    const itemYearRaw = m[3].trim();
+    const yearMatch = itemYearRaw.match(/(\d{4})/);
+    const itemYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+    const itemType = itemUrl.includes("/series/") || itemUrl.includes("/animation/") ? "tv" : itemUrl.includes("/films/") ? "movie" : null;
+    const idMatch = itemUrl.match(/\/(\d+)-[^/]+\.html$/);
+    candidates.push({
+      id: idMatch ? idMatch[1] : null,
+      url: itemUrl,
+      title: itemTitle,
+      year: itemYear,
+      type: itemType
+    });
+  }
+  return candidates;
+}
+function rankCandidates(candidates, { title, originalTitle, year, mediaType }) {
+  if (candidates.length === 0) return [];
+  const norm = (s) => (s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const targetType = mediaType === "tv" || mediaType === "anime" ? "tv" : "movie";
+  const normalizedTargets = [title, originalTitle].filter(Boolean).map(norm).filter(Boolean);
+  const scored = candidates.map((c) => {
+    let score = 0;
+    if (c.type === targetType) score += 10;
+    if (year && c.year === year) score += 50;
+    const normalizedTitle = norm(c.title);
+    for (const t of normalizedTargets) {
+      if (normalizedTitle === t) {
+        score += 40;
+        break;
+      }
+      if (normalizedTitle.includes(t) || t.includes(normalizedTitle)) {
+        score += 8;
+      }
+    }
+    return { c, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map((s) => s.c);
+}
+
 // src/hdrezka/sha256.js
 var K = new Uint32Array([
   1116352408,
@@ -447,127 +532,6 @@ function submitChallenge(_0, _1, _2) {
   });
 }
 
-// src/hdrezka/search.js
-function readSetCookies2(response) {
-  var _a, _b;
-  const out = [];
-  const list = ((_b = (_a = response.headers).getSetCookie) == null ? void 0 : _b.call(_a)) || [];
-  for (const c of list) out.push(c.split(";")[0]);
-  if (out.length === 0) {
-    const header = response.headers.get("set-cookie");
-    if (header) {
-      for (const c of header.split(/,(?=[^;]+=[^;]+)/)) {
-        out.push(c.split(";")[0]);
-      }
-    }
-  }
-  return out;
-}
-function fetchSearch(_0) {
-  return __async(this, arguments, function* (url, options = {}) {
-    try {
-      return yield fetchText(url, options);
-    } catch (e) {
-      if (!e.message.includes("403") && !e.message.includes("405")) throw e;
-      const host = hostFromUrl(url);
-      const cookieHeader = jarCookieHeader(host);
-      const headers = __spreadValues(__spreadValues(__spreadValues({}, HEADERS), cookieHeader ? { Cookie: cookieHeader } : {}), options.headers || {});
-      const res = yield fetch(url, { headers });
-      if (host) jarSet(host, readSetCookies2(res));
-      const text = yield res.text();
-      const challenge = parseAnubisChallenge(text);
-      if (!challenge) throw e;
-      console.log(`[HDRezka] Anubis search challenge (difficulty=${challenge.difficulty})`);
-      const solution = yield solveChallenge(challenge);
-      yield submitChallenge(solution, url, Date.now());
-      return fetchText(url, options);
-    }
-  });
-}
-function searchHdrezka(title, originalTitle, year, mediaType) {
-  return __async(this, null, function* () {
-    const seenUrls = /* @__PURE__ */ new Set();
-    const all = [];
-    const baseQueries = [
-      originalTitle,
-      title
-    ].filter(Boolean);
-    const queries = [];
-    for (const q of baseQueries) {
-      queries.push(q);
-      if (year) queries.push(`${q} ${year}`);
-    }
-    for (const query of queries) {
-      const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(query)}`;
-      let html;
-      try {
-        html = yield fetchSearch(url, {
-          headers: {
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": `${BASE_URL}/`
-          }
-        });
-      } catch (e) {
-        console.error(`[HDRezka] search failed for "${query}": ${e.message}`);
-        continue;
-      }
-      for (const c of parseSearchHtml(html)) {
-        if (!seenUrls.has(c.url)) {
-          seenUrls.add(c.url);
-          all.push(c);
-        }
-      }
-    }
-    return rankCandidates(all, { title, originalTitle, year, mediaType });
-  });
-}
-function parseSearchHtml(html) {
-  const candidates = [];
-  const re = /<a href="([^"]+)"><span class="enty">([^<]+)<\/span>[^<]*?\(([^)]+)\)/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    const itemUrl = m[1];
-    const itemTitle = m[2].trim();
-    const itemYearRaw = m[3].trim();
-    const yearMatch = itemYearRaw.match(/(\d{4})/);
-    const itemYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
-    const itemType = itemUrl.includes("/series/") || itemUrl.includes("/animation/") ? "tv" : itemUrl.includes("/films/") ? "movie" : null;
-    const idMatch = itemUrl.match(/\/(\d+)-[^/]+\.html$/);
-    candidates.push({
-      id: idMatch ? idMatch[1] : null,
-      url: itemUrl,
-      title: itemTitle,
-      year: itemYear,
-      type: itemType
-    });
-  }
-  return candidates;
-}
-function rankCandidates(candidates, { title, originalTitle, year, mediaType }) {
-  if (candidates.length === 0) return [];
-  const norm = (s) => (s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-  const targetType = mediaType === "tv" || mediaType === "anime" ? "tv" : "movie";
-  const normalizedTargets = [title, originalTitle].filter(Boolean).map(norm).filter(Boolean);
-  const scored = candidates.map((c) => {
-    let score = 0;
-    if (c.type === targetType) score += 10;
-    if (year && c.year === year) score += 50;
-    const normalizedTitle = norm(c.title);
-    for (const t of normalizedTargets) {
-      if (normalizedTitle === t) {
-        score += 40;
-        break;
-      }
-      if (normalizedTitle.includes(t) || t.includes(normalizedTitle)) {
-        score += 8;
-      }
-    }
-    return { c, score };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return scored.map((s) => s.c);
-}
-
 // src/hdrezka/extractor.js
 function fetchPage(url) {
   return __async(this, null, function* () {
@@ -764,10 +728,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
     const resolved = yield resolveTmdbId(tmdbId, mediaType);
     tmdbId = resolved.id;
     mediaType = resolved.mediaType;
-    try {
-      yield fetchPage(BASE_URL);
-    } catch (e) {
-    }
     const tmdb = yield fetchTmdb(tmdbId, mediaType);
     const title = tmdb.title;
     const year = tmdb.year;
