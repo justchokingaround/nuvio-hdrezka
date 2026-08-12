@@ -94,11 +94,15 @@ function jarCookieHeader(host) {
   return pairs.length > 0 ? pairs.join("; ") : void 0;
 }
 function hostFromUrl(url) {
-  try {
-    return new URL(url).host;
-  } catch (e) {
-    return "";
+  if (typeof URL !== "undefined") {
+    try {
+      return new URL(url).host;
+    } catch (e) {
+      return "";
+    }
   }
+  const m = String(url).match(/^https?:\/\/([^/:]+)/);
+  return m ? m[1] : "";
 }
 function randomHex(length) {
   let s = "";
@@ -157,10 +161,7 @@ function fetchText(_0) {
 function postForm(_0, _1) {
   return __async(this, arguments, function* (path, fields, options = {}) {
     const url = path.startsWith("http") ? path : `${BASE_URL}${path}`;
-    const body = new URLSearchParams();
-    for (const [k, v] of Object.entries(fields)) {
-      body.append(k, String(v));
-    }
+    const body = Object.entries(fields).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
     const host = hostFromUrl(url);
     const cookieHeader = jarCookieHeader(host);
     const response = yield fetch(url, __spreadValues({
@@ -169,7 +170,7 @@ function postForm(_0, _1) {
         "Content-Type": "application/x-www-form-urlencoded",
         "X-Requested-With": "XMLHttpRequest"
       }), cookieHeader ? { Cookie: cookieHeader } : {}), options.headers || {}),
-      body: body.toString(),
+      body,
       redirect: "follow"
     }, options));
     if (host) {
@@ -412,7 +413,8 @@ function sha256Hex(message) {
   const bytes = sha256(message);
   let hex = "";
   for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i].toString(16).padStart(2, "0");
+    const h = bytes[i].toString(16);
+    hex += h.length === 1 ? "0" + h : h;
   }
   return hex;
 }
@@ -451,14 +453,14 @@ function submitChallenge(_0, _1, _2) {
   return __async(this, arguments, function* ({ id, nonce, response, difficulty }, redirUrl, t0) {
     var _a, _b, _c;
     const elapsedTime = ((Date.now() - t0) / 1e3).toFixed(3);
-    const params = new URLSearchParams({
-      id,
-      nonce,
-      response,
-      redir: redirUrl,
-      elapsedTime
-    });
-    const url = `${BASE_URL}${PASS_PATH}?${params.toString()}`;
+    const parts = [
+      `id=${encodeURIComponent(id)}`,
+      `nonce=${encodeURIComponent(nonce)}`,
+      `response=${encodeURIComponent(response)}`,
+      `redir=${encodeURIComponent(redirUrl)}`,
+      `elapsedTime=${encodeURIComponent(elapsedTime)}`
+    ];
+    const url = `${BASE_URL}${PASS_PATH}?${parts.join("&")}`;
     const host = hostFromUrl(redirUrl);
     const testCookieValue = (_a = cookieJar.get(host)) == null ? void 0 : _a["techaro.lol-anubis-cookie-verification"];
     const testCookie = testCookieValue ? `techaro.lol-anubis-cookie-verification=${testCookieValue}` : null;

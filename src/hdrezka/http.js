@@ -68,11 +68,16 @@ function jarCookieHeader(host) {
 }
 
 function hostFromUrl(url) {
-    try {
-        return new URL(url).host;
-    } catch {
-        return '';
+    if (typeof URL !== 'undefined') {
+        try {
+            return new URL(url).host;
+        } catch {
+            return '';
+        }
     }
+    // Hermes-safe fallback for environments without the URL constructor.
+    const m = String(url).match(/^https?:\/\/([^/:]+)/);
+    return m ? m[1] : '';
 }
 
 /**
@@ -166,10 +171,9 @@ export async function fetchJson(url, options = {}) {
  */
 export async function postForm(path, fields, options = {}) {
     const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
-    const body = new URLSearchParams();
-    for (const [k, v] of Object.entries(fields)) {
-        body.append(k, String(v));
-    }
+    const body = Object.entries(fields)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join('&');
     const host = hostFromUrl(url);
     const cookieHeader = jarCookieHeader(host);
     const response = await fetch(url, {
@@ -181,7 +185,7 @@ export async function postForm(path, fields, options = {}) {
             ...(cookieHeader ? { Cookie: cookieHeader } : {}),
             ...(options.headers || {}),
         },
-        body: body.toString(),
+        body,
         redirect: 'follow',
         ...options,
     });

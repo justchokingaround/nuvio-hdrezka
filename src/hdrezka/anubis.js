@@ -69,14 +69,14 @@ export async function solveChallenge(challenge) {
  */
 export async function submitChallenge({ id, nonce, response, difficulty }, redirUrl, t0) {
     const elapsedTime = ((Date.now() - t0) / 1000).toFixed(3);
-    const params = new URLSearchParams({
-        id,
-        nonce,
-        response,
-        redir: redirUrl,
-        elapsedTime,
-    });
-    const url = `${BASE_URL}${PASS_PATH}?${params.toString()}`;
+    const parts = [
+        `id=${encodeURIComponent(id)}`,
+        `nonce=${encodeURIComponent(nonce)}`,
+        `response=${encodeURIComponent(response)}`,
+        `redir=${encodeURIComponent(redirUrl)}`,
+        `elapsedTime=${encodeURIComponent(elapsedTime)}`,
+    ];
+    const url = `${BASE_URL}${PASS_PATH}?${parts.join('&')}`;
 
     const host = hostFromUrl(redirUrl);
     const testCookieValue = cookieJar.get(host)?.['techaro.lol-anubis-cookie-verification'];

@@ -10,7 +10,7 @@
       "version": "0.1.0",
       "author": "nuvio-hdrezka",
       "supportedTypes": ["movie", "tv"],
-      "filename": "providers/hdrezka.cjs",
+      "filename": "providers/hdrezka.js",
       "enabled": true,
       "logo": "https://hdrezka.website/templates/school/images/logo.png",
       "contentLanguage": ["en", "ru"],
@@ -18,6 +18,17 @@
       "limited": false,
       "disabledPlatforms": [],
       "supportsExternalPlayer": true
+    },
+    {
+      "id": "debug",
+      "name": "DebugProvider",
+      "description": "Static test stream to verify Nuvio loads providers.",
+      "version": "0.1.0",
+      "author": "nuvio-hdrezka",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/debug.js",
+      "enabled": true,
+      "formats": ["mp4"]
     }
   ]
 }

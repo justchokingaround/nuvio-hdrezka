@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node addon.js",
     "dev": "node addon.js",
-    "build": "node -e \"require('fs').cpSync('../providers/hdrezka.cjs','providers/hdrezka.cjs')\""
+    "build": "node -e \"require('fs').cpSync('../providers/hdrezka.js','providers/hdrezka.js')\""
   },
   "dependencies": {
     "stremio-addon-sdk": "^1.6.10"
