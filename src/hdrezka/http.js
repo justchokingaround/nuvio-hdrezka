@@ -129,7 +129,7 @@ function readSetCookies(response) {
     return out;
 }
 
-export { BASE_URL, HEADERS, cookieJar, jarSet, hostFromUrl };
+export { BASE_URL, HEADERS, cookieJar, jarSet, jarCookieHeader, hostFromUrl };
 
 /**
  * GET a URL and return the response body as text.

@@ -8,7 +8,63 @@
  * don't need cheerio for this step.
  */
 
-import { BASE_URL, fetchText } from './http.js';
+import {
+    BASE_URL,
+    HEADERS,
+    fetchText,
+    hostFromUrl,
+    jarCookieHeader,
+    jarSet,
+} from './http.js';
+import {
+    parseAnubisChallenge,
+    solveChallenge,
+    submitChallenge,
+} from './anubis.js';
+
+function readSetCookies(response) {
+    const out = [];
+    const list = response.headers.getSetCookie?.() || [];
+    for (const c of list) out.push(c.split(';')[0]);
+    if (out.length === 0) {
+        const header = response.headers.get('set-cookie');
+        if (header) {
+            for (const c of header.split(/,(?=[^;]+=[^;]+)/)) {
+                out.push(c.split(';')[0]);
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Fetch the search endpoint, transparently solving an Anubis challenge if
+ * the datacenter IP is served one on the first attempt.
+ */
+async function fetchSearch(url, options = {}) {
+    try {
+        return await fetchText(url, options);
+    } catch (e) {
+        if (!e.message.includes('403') && !e.message.includes('405')) throw e;
+        const host = hostFromUrl(url);
+        const cookieHeader = jarCookieHeader(host);
+        const headers = {
+            ...HEADERS,
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+            ...(options.headers || {}),
+        };
+        const res = await fetch(url, { headers });
+        if (host) jarSet(host, readSetCookies(res));
+        const text = await res.text();
+        const challenge = parseAnubisChallenge(text);
+        if (!challenge) throw e;
+        console.log(`[HDRezka] Anubis search challenge (difficulty=${challenge.difficulty})`);
+        const solution = await solveChallenge(challenge);
+        // elapsedTime doesn't matter much for a fallback solve.
+        await submitChallenge(solution, url, Date.now());
+        return fetchText(url, options);
+    }
+}
 
 /**
  * Search HDRezka for `title` and `originalTitle` (and with the year appended)
@@ -38,7 +94,7 @@ export async function searchHdrezka(title, originalTitle, year, mediaType) {
         const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(query)}`;
         let html;
         try {
-            html = await fetchText(url, {
+            html = await fetchSearch(url, {
                 headers: {
                     'X-Requested-With': 'XMLHttpRequest',
                     'Referer': `${BASE_URL}/`,
