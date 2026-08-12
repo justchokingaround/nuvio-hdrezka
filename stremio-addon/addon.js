@@ -99,7 +99,7 @@ const addonInterface = builder.getInterface();
 if (require.main === module) {
     const { serveHTTP } = require('stremio-addon-sdk');
     const os = require('os');
-    const port = process.env.PORT || 7000;
+    const port = process.env.PORT || 7001;
 
     // Find a non-internal IPv4 address to show the user.
     const ifaces = os.networkInterfaces();

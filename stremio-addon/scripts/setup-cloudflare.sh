@@ -98,7 +98,7 @@ tunnel: ${TUNNEL_ID}
 credentials-file: ${CRED_FILE}
 ingress:
   - hostname: ${HOSTNAME}
-    service: http://localhost:7000
+    service: http://localhost:${PORT:-7001}
   - service: http_status:404
 EOF
 

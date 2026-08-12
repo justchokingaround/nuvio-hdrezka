@@ -48,8 +48,8 @@ node addon.js
 ```
 
 The console prints two URLs:
-- `http://127.0.0.1:7000/manifest.json` — for Stremio on the same computer
-- `http://192.168.x.x:7000/manifest.json` — for Stremio on a TV/phone connected to the same Wi-Fi
+- `http://127.0.0.1:7001/manifest.json` — for Stremio on the same computer
+- `http://192.168.x.x:7001/manifest.json` — for Stremio on a TV/phone connected to the same Wi-Fi
 
 In Stremio: **Addons → Add Addon URL** and paste the LAN URL.
 

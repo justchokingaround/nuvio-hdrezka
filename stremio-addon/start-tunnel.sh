@@ -9,7 +9,7 @@ set -e
 
 cd "$(dirname "$0")"
 
-PORT="${PORT:-7000}"
+PORT="${PORT:-7001}"
 TUNNEL_PROVIDER="${TUNNEL_PROVIDER:-}"
 
 # Load .env if present
@@ -39,7 +39,7 @@ fi
 # Wait for the local addon to answer
 wait_for_addon() {
   for _ in $(seq 1 30); do
-    if curl -s -o /dev/null "http://127.0.0.1:${PORT}/manifest.json"; then
+    if curl -sf -o /dev/null "http://127.0.0.1:${PORT}/manifest.json"; then
       return 0
     fi
     sleep 1
@@ -52,15 +52,34 @@ wait_for_addon() {
 cleanup() {
   echo ""
   echo "Shutting down..."
-  kill "${ADDON_PID:-}" "${TUNNEL_PID:-}" 2>/dev/null || true
+  if [ -n "${ADDON_PID:-}" ]; then
+    kill "$ADDON_PID" 2>/dev/null || true
+  fi
+  if [ -n "${TUNNEL_PID:-}" ]; then
+    kill "$TUNNEL_PID" 2>/dev/null || true
+  fi
   wait 2>/dev/null || true
 }
 trap cleanup EXIT
 
-echo "Starting Stremio addon (http://127.0.0.1:${PORT})..."
-node addon.js &
-ADDON_PID=$!
-wait_for_addon
+# If an addon is already listening on the port, reuse it.
+if curl -sf -o /dev/null "http://127.0.0.1:${PORT}/manifest.json"; then
+  echo "An addon is already running on http://127.0.0.1:${PORT}; reusing it."
+  ADDON_PID=""
+else
+  echo "Starting Stremio addon (http://127.0.0.1:${PORT})..."
+  node addon.js &
+  ADDON_PID=$!
+
+  sleep 1
+  if ! kill -0 "$ADDON_PID" 2>/dev/null; then
+    echo ""
+    echo "Addon failed to start. Is port ${PORT} already in use?"
+    echo "Stop the other process or run with PORT=<other> ./start-tunnel.sh"
+    exit 1
+  fi
+  wait_for_addon
+fi
 
 if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
   if [ -z "${NGROK_DOMAIN:-}" ]; then
