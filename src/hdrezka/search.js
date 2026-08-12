@@ -38,7 +38,12 @@ export async function searchHdrezka(title, originalTitle, year, mediaType) {
         const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(query)}`;
         let html;
         try {
-            html = await fetchText(url);
+            html = await fetchText(url, {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': `${BASE_URL}/`,
+                },
+            });
         } catch (e) {
             console.error(`[HDRezka] search failed for "${query}": ${e.message}`);
             continue;

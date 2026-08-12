@@ -201,7 +201,12 @@ function searchHdrezka(title, originalTitle, year, mediaType) {
       const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(query)}`;
       let html;
       try {
-        html = yield fetchText(url);
+        html = yield fetchText(url, {
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": `${BASE_URL}/`
+          }
+        });
       } catch (e) {
         console.error(`[HDRezka] search failed for "${query}": ${e.message}`);
         continue;
