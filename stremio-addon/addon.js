@@ -18,17 +18,31 @@ const builder = addonBuilder({
     description: 'Streams from HDRezka (hdrezka.website).',
     resources: ['stream'],
     types: ['movie', 'series'],
-    idPrefixes: ['tmdb:'],
+    idPrefixes: ['tt', 'tmdb:'],
     catalogs: [],
 });
 
 builder.defineStreamHandler(async (args) => {
     const { type, id } = args;
-    // id format: "tmdb:603" for movie, "tmdb:1396:1:1" for series.
-    const parts = id.split(':');
-    const tmdbId = parts[1];
-    const season = parts[2] ? parseInt(parts[2], 10) : null;
-    const episode = parts[3] ? parseInt(parts[3], 10) : null;
+    // Stremio usually passes IMDb IDs: "tt0434706" for movies or
+    // "tt0434706:1:1" for series. Some Nuvio setups pass "tmdb:603".
+    let tmdbId;
+    let season = null;
+    let episode = null;
+    if (id.startsWith('tt')) {
+        const parts = id.split(':');
+        tmdbId = parts[0];
+        season = parts[1] ? parseInt(parts[1], 10) : null;
+        episode = parts[2] ? parseInt(parts[2], 10) : null;
+    } else if (id.startsWith('tmdb:')) {
+        const parts = id.split(':');
+        tmdbId = parts[1];
+        season = parts[2] ? parseInt(parts[2], 10) : null;
+        episode = parts[3] ? parseInt(parts[3], 10) : null;
+    } else {
+        return { streams: [] };
+    }
+
     const mediaType = type === 'series' ? 'tv' : 'movie';
 
     let streams;
