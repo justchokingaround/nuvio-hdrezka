@@ -128,8 +128,22 @@ function readSetCookies(response) {
     }
     return out;
 }
-
 export { BASE_URL, HEADERS, cookieJar, jarSet, jarCookieHeader, hostFromUrl };
+
+
+/**
+ * Wrap a fetch() with a timeout so a stalled upstream connection cannot
+ * hang the addon request forever (Nuvio/TV clients give up quickly).
+ */
+async function fetchWithTimeout(url, init, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 /**
  * GET a URL and return the response body as text.
@@ -143,11 +157,15 @@ export async function fetchText(url, options = {}) {
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
         ...(options.headers || {}),
     };
-    const response = await fetch(url, {
-        headers,
-        redirect: options.followRedirects === false ? 'manual' : 'follow',
-        ...options,
-    });
+    const response = await fetchWithTimeout(
+        url,
+        {
+            headers,
+            redirect: options.followRedirects === false ? 'manual' : 'follow',
+            ...options,
+        },
+        options.timeoutMs || 12000
+    );
     if (host) {
         jarSet(host, readSetCookies(response));
     }
@@ -179,19 +197,23 @@ export async function postForm(path, fields, options = {}) {
         .join('&');
     const host = hostFromUrl(url);
     const cookieHeader = jarCookieHeader(host);
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            ...HEADERS,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Requested-With': 'XMLHttpRequest',
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-            ...(options.headers || {}),
+    const response = await fetchWithTimeout(
+        url,
+        {
+            method: 'POST',
+            headers: {
+                ...HEADERS,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest',
+                ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+                ...(options.headers || {}),
+            },
+            body,
+            redirect: 'follow',
+            ...options,
         },
-        body,
-        redirect: 'follow',
-        ...options,
-    });
+        options.timeoutMs || 15000
+    );
     if (host) {
         jarSet(host, readSetCookies(response));
     }

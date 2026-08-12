@@ -114,6 +114,15 @@ if (require.main === module) {
             console.log(`Same-LAN: http://${lan.address}:${port}/manifest.json`);
         }
         console.log('-----------------------------\n');
+
+        // Pre-solve the Anubis challenge while the user is still browsing.
+        // This makes the first actual stream request much faster.
+        setTimeout(() => {
+            console.log('[HDRezka] Warming session...');
+            getStreams('tt0133093', 'movie')
+                .then(() => console.log('[HDRezka] Session warm complete'))
+                .catch((err) => console.error('[HDRezka] Session warm failed:', err.message));
+        }, 100);
     });
 }
 

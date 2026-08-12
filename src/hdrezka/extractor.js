@@ -307,7 +307,12 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
     const resolved = await resolveTmdbId(tmdbId, mediaType);
     tmdbId = resolved.id;
     mediaType = resolved.mediaType;
-    const tmdb = await fetchTmdb(tmdbId, mediaType);
+
+    // The TMDB /find endpoint already gave us title/year for IMDb IDs.
+    // Only fetch details when we only have a numeric TMDB ID.
+    const tmdb = resolved.title
+        ? resolved
+        : await fetchTmdb(tmdbId, mediaType);
     const title = tmdb.title;
     const year = tmdb.year;
     if (!title) throw new Error(`STAGE1_NO_TITLE (tmdb=${tmdbId})`);
@@ -346,7 +351,9 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
 
     const out = [];
     const seenKeys = new Set();
-    for (const translator of translators) {
+    // Query every allowed translator in parallel so a slow CDN response
+    // for one of them does not serialize the whole request.
+    const rows = await Promise.all(translators.map(async (translator) => {
         let cdn;
         try {
             cdn = await postForm('/ajax/get_cdn_series/', {
@@ -356,10 +363,10 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
             });
         } catch (e) {
             console.error(`[HDRezka] CDN failed for translator ${translator.name}: ${e.message}`);
-            continue;
+            return [];
         }
 
-        if (!cdn.success || !cdn.url) continue;
+        if (!cdn.success || !cdn.url) return [];
 
         const streams = deobfuscateStreams(cdn.url);
         const subs = parseSubtitles(cdn.subtitle);
@@ -373,6 +380,7 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
             hasCorsRestrictions: false,
         }));
 
+        const translatorRows = [];
         for (const s of streams) {
             if (!s.url || s.url === 'null' || s.url.includes(':hls:')) continue;
             const quality = s.quality.replace(/<[^>]+>/g, '').trim();
@@ -382,9 +390,8 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
             if (seenKeys.has(dedupeKey)) continue;
             seenKeys.add(dedupeKey);
 
-            const displayName = `HDRezka · ${translator.name}`;
-            out.push({
-                name: displayName,
+            translatorRows.push({
+                name: `HDRezka · ${translator.name}`,
                 title: formatStreamTitle(
                     title,
                     year,
@@ -404,7 +411,10 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
                 type: 'mp4',
             });
         }
-    }
+        return translatorRows;
+    }));
+    for (const rowList of rows) out.push(...rowList);
+
 
     out.sort((a, b) => {
         const aq = parseQualityValue(a.quality);
@@ -464,29 +474,43 @@ async function resolveTmdbId(rawId, mediaType) {
 
     const apiKey = '439c478a771f35c05022f9feabcca01c';
     const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${apiKey}&external_source=imdb_id`;
-    const data = await fetch(url).then((r) => {
-        if (!r.ok) throw new Error(`TMDB find ${r.status}`);
-        return r.json();
-    });
+    const data = await fetchJson(url);
+
+    const pick = (result, type) => {
+        const isTv = type === 'tv';
+        const title = isTv ? result.name : result.title;
+        const originalTitle = isTv ? result.original_name : result.original_title;
+        const date = isTv ? result.first_air_date : result.release_date;
+        return {
+            id: String(result.id),
+            mediaType: type,
+            title,
+            originalTitle: originalTitle || title,
+            year: date ? parseInt(date.substring(0, 4), 10) : null,
+        };
+    };
 
     const preferTv = mediaType === 'tv' || mediaType === 'anime';
+    let chosen = null;
     if (preferTv) {
         if (data.tv_results && data.tv_results.length > 0) {
-            return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || 'tv' };
-        }
-        if (data.movie_results && data.movie_results.length > 0) {
-            return { id: String(data.movie_results[0].id), mediaType: 'movie' };
+            chosen = pick(data.tv_results[0], data.tv_results[0].media_type || 'tv');
+        } else if (data.movie_results && data.movie_results.length > 0) {
+            chosen = pick(data.movie_results[0], 'movie');
         }
     } else {
         if (data.movie_results && data.movie_results.length > 0) {
-            return { id: String(data.movie_results[0].id), mediaType: 'movie' };
-        }
-        if (data.tv_results && data.tv_results.length > 0) {
-            return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || 'tv' };
+            chosen = pick(data.movie_results[0], 'movie');
+        } else if (data.tv_results && data.tv_results.length > 0) {
+            chosen = pick(data.tv_results[0], data.tv_results[0].media_type || 'tv');
         }
     }
 
-    throw new Error(`IMDb ${imdbId} not found on TMDB`);
+    if (!chosen) {
+        throw new Error(`IMDb ${imdbId} not found on TMDB`);
+    }
+
+    return chosen;
 }
 
 /**
@@ -498,10 +522,7 @@ async function fetchTmdb(tmdbId, mediaType) {
     const path = mediaType === 'tv' || mediaType === 'anime' ? 'tv' : 'movie';
     const url = `https://api.themoviedb.org/3/${path}/${tmdbId}?api_key=${apiKey}`;
     try {
-        const data = await fetch(url).then((r) => {
-            if (!r.ok) throw new Error(`TMDB ${r.status}`);
-            return r.json();
-        });
+        const data = await fetchJson(url);
         const isTv = mediaType === 'tv' || mediaType === 'anime';
         const title = isTv ? data.name : data.title;
         const originalTitle = isTv ? data.original_name : data.original_title;

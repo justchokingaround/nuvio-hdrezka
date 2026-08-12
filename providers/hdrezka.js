@@ -140,15 +140,30 @@ function readSetCookies(response) {
   }
   return out;
 }
+function fetchWithTimeout(url, init, timeoutMs) {
+  return __async(this, null, function* () {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return yield fetch(url, __spreadProps(__spreadValues({}, init), { signal: controller.signal }));
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+}
 function fetchText(_0) {
   return __async(this, arguments, function* (url, options = {}) {
     const host = hostFromUrl(url);
     const cookieHeader = jarCookieHeader(host);
     const headers = __spreadValues(__spreadValues(__spreadValues({}, HEADERS), cookieHeader ? { Cookie: cookieHeader } : {}), options.headers || {});
-    const response = yield fetch(url, __spreadValues({
-      headers,
-      redirect: options.followRedirects === false ? "manual" : "follow"
-    }, options));
+    const response = yield fetchWithTimeout(
+      url,
+      __spreadValues({
+        headers,
+        redirect: options.followRedirects === false ? "manual" : "follow"
+      }, options),
+      options.timeoutMs || 12e3
+    );
     if (host) {
       jarSet(host, readSetCookies(response));
     }
@@ -161,21 +176,31 @@ function fetchText(_0) {
     return yield response.text();
   });
 }
+function fetchJson(_0) {
+  return __async(this, arguments, function* (url, options = {}) {
+    const text = yield fetchText(url, options);
+    return JSON.parse(text);
+  });
+}
 function postForm(_0, _1) {
   return __async(this, arguments, function* (path, fields, options = {}) {
     const url = path.startsWith("http") ? path : `${BASE_URL}${path}`;
     const body = Object.entries(fields).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
     const host = hostFromUrl(url);
     const cookieHeader = jarCookieHeader(host);
-    const response = yield fetch(url, __spreadValues({
-      method: "POST",
-      headers: __spreadValues(__spreadValues(__spreadProps(__spreadValues({}, HEADERS), {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Requested-With": "XMLHttpRequest"
-      }), cookieHeader ? { Cookie: cookieHeader } : {}), options.headers || {}),
-      body,
-      redirect: "follow"
-    }, options));
+    const response = yield fetchWithTimeout(
+      url,
+      __spreadValues({
+        method: "POST",
+        headers: __spreadValues(__spreadValues(__spreadProps(__spreadValues({}, HEADERS), {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Requested-With": "XMLHttpRequest"
+        }), cookieHeader ? { Cookie: cookieHeader } : {}), options.headers || {}),
+        body,
+        redirect: "follow"
+      }, options),
+      options.timeoutMs || 15e3
+    );
     if (host) {
       jarSet(host, readSetCookies(response));
     }
@@ -728,7 +753,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
     const resolved = yield resolveTmdbId(tmdbId, mediaType);
     tmdbId = resolved.id;
     mediaType = resolved.mediaType;
-    const tmdb = yield fetchTmdb(tmdbId, mediaType);
+    const tmdb = resolved.title ? resolved : yield fetchTmdb(tmdbId, mediaType);
     const title = tmdb.title;
     const year = tmdb.year;
     if (!title) throw new Error(`STAGE1_NO_TITLE (tmdb=${tmdbId})`);
@@ -756,7 +781,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
     }
     const out = [];
     const seenKeys = /* @__PURE__ */ new Set();
-    for (const translator of translators) {
+    const rows = yield Promise.all(translators.map((translator) => __async(this, null, function* () {
       let cdn;
       try {
         cdn = yield postForm("/ajax/get_cdn_series/", __spreadProps(__spreadValues({}, baseForm), {
@@ -765,9 +790,9 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }));
       } catch (e) {
         console.error(`[HDRezka] CDN failed for translator ${translator.name}: ${e.message}`);
-        continue;
+        return [];
       }
-      if (!cdn.success || !cdn.url) continue;
+      if (!cdn.success || !cdn.url) return [];
       const streams = deobfuscateStreams(cdn.url);
       const subs = parseSubtitles(cdn.subtitle);
       const cleanSubs = subs.map((s) => ({
@@ -779,6 +804,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         type: "vtt",
         hasCorsRestrictions: false
       }));
+      const translatorRows = [];
       for (const s of streams) {
         if (!s.url || s.url === "null" || s.url.includes(":hls:")) continue;
         const quality = s.quality.replace(/<[^>]+>/g, "").trim();
@@ -786,9 +812,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
         const dedupeKey = `${translator.name}|${quality}`;
         if (seenKeys.has(dedupeKey)) continue;
         seenKeys.add(dedupeKey);
-        const displayName = `HDRezka \xB7 ${translator.name}`;
-        out.push({
-          name: displayName,
+        translatorRows.push({
+          name: `HDRezka \xB7 ${translator.name}`,
           title: formatStreamTitle(
             title,
             year,
@@ -807,7 +832,9 @@ function getStreams(tmdbId, mediaType, season, episode) {
           type: "mp4"
         });
       }
-    }
+      return translatorRows;
+    })));
+    for (const rowList of rows) out.push(...rowList);
     out.sort((a, b) => {
       const aq = parseQualityValue(a.quality);
       const bq = parseQualityValue(b.quality);
@@ -852,27 +879,39 @@ function resolveTmdbId(rawId, mediaType) {
     const imdbId = imdbMatch[0];
     const apiKey = "439c478a771f35c05022f9feabcca01c";
     const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${apiKey}&external_source=imdb_id`;
-    const data = yield fetch(url).then((r) => {
-      if (!r.ok) throw new Error(`TMDB find ${r.status}`);
-      return r.json();
-    });
+    const data = yield fetchJson(url);
+    const pick = (result, type) => {
+      const isTv = type === "tv";
+      const title = isTv ? result.name : result.title;
+      const originalTitle = isTv ? result.original_name : result.original_title;
+      const date = isTv ? result.first_air_date : result.release_date;
+      return {
+        id: String(result.id),
+        mediaType: type,
+        title,
+        originalTitle: originalTitle || title,
+        year: date ? parseInt(date.substring(0, 4), 10) : null
+      };
+    };
     const preferTv = mediaType === "tv" || mediaType === "anime";
+    let chosen = null;
     if (preferTv) {
       if (data.tv_results && data.tv_results.length > 0) {
-        return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || "tv" };
-      }
-      if (data.movie_results && data.movie_results.length > 0) {
-        return { id: String(data.movie_results[0].id), mediaType: "movie" };
+        chosen = pick(data.tv_results[0], data.tv_results[0].media_type || "tv");
+      } else if (data.movie_results && data.movie_results.length > 0) {
+        chosen = pick(data.movie_results[0], "movie");
       }
     } else {
       if (data.movie_results && data.movie_results.length > 0) {
-        return { id: String(data.movie_results[0].id), mediaType: "movie" };
-      }
-      if (data.tv_results && data.tv_results.length > 0) {
-        return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || "tv" };
+        chosen = pick(data.movie_results[0], "movie");
+      } else if (data.tv_results && data.tv_results.length > 0) {
+        chosen = pick(data.tv_results[0], data.tv_results[0].media_type || "tv");
       }
     }
-    throw new Error(`IMDb ${imdbId} not found on TMDB`);
+    if (!chosen) {
+      throw new Error(`IMDb ${imdbId} not found on TMDB`);
+    }
+    return chosen;
   });
 }
 function fetchTmdb(tmdbId, mediaType) {
@@ -881,10 +920,7 @@ function fetchTmdb(tmdbId, mediaType) {
     const path = mediaType === "tv" || mediaType === "anime" ? "tv" : "movie";
     const url = `https://api.themoviedb.org/3/${path}/${tmdbId}?api_key=${apiKey}`;
     try {
-      const data = yield fetch(url).then((r) => {
-        if (!r.ok) throw new Error(`TMDB ${r.status}`);
-        return r.json();
-      });
+      const data = yield fetchJson(url);
       const isTv = mediaType === "tv" || mediaType === "anime";
       const title = isTv ? data.name : data.title;
       const originalTitle = isTv ? data.original_name : data.original_title;
