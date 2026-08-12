@@ -1,0 +1,16 @@
+{
+  "name": "nuvio-hdrezka-stremio",
+  "version": "0.1.0",
+  "description": "Stremio addon wrapper around the HDRezka Nuvio provider.",
+  "private": true,
+  "scripts": {
+    "start": "node addon.js",
+    "dev": "node addon.js"
+  },
+  "dependencies": {
+    "stremio-addon-sdk": "^1.6.10"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -3,11 +3,11 @@
 /**
  * Build script for nuvio-hdrezka.
  *
- * Bundles src/hdrezka/index.js into providers/hdrezka.js, transpiling
+ * Bundles src/hdrezka/index.js into providers/hdrezka.cjs, transpiling
  * async/await to generator functions for Hermes compatibility.
  *
  * Usage:
- *   node build.js           # build providers/hdrezka.js
+ *   node build.js           # build providers/hdrezka.cjs
  *   node build.js --minify  # also minify
  */
 
@@ -23,7 +23,7 @@ const EXTERNAL = ['cheerio-without-node-native', 'cheerio', 'react-native-cheeri
 
 async function buildProvider(name, options = {}) {
     const entry = path.join(srcDir, name, 'index.js');
-    const out = path.join(outDir, `${name}.js`);
+    const out = path.join(outDir, `${name}.cjs`);
 
     if (!fs.existsSync(entry)) {
         console.error(`No src/${name}/index.js`);
@@ -44,7 +44,7 @@ async function buildProvider(name, options = {}) {
     });
 
     const kb = (fs.statSync(out).size / 1024).toFixed(1);
-    console.log(`✓ providers/${name}.js (${kb} KB)${options.minify ? ' (minified)' : ''}`);
+    console.log(`✓ providers/${name}.cjs (${kb} KB)${options.minify ? ' (minified)' : ''}`);
     return true;
 }
 
