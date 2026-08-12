@@ -63,21 +63,20 @@ ADDON_PID=$!
 wait_for_addon
 
 if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
-  if ! command -v ngrok >/dev/null 2>&1; then
-    echo "ngrok is not installed. Installing via npm..."
-    npm install -g ngrok
-    if ! command -v ngrok >/dev/null 2>&1 && [ -x "$(npm root -g)/bin/ngrok" ]; then
-      export PATH="$(npm root -g)/bin:$PATH"
-    fi
-  fi
-
   if [ -z "${NGROK_DOMAIN:-}" ]; then
     echo "NGROK_DOMAIN is not set. See .env.example."
     exit 1
   fi
+  if [ -z "${NGROK_AUTHTOKEN:-}" ]; then
+    echo "NGROK_AUTHTOKEN is not set. See .env.example."
+    exit 1
+  fi
+
+  # Register the token with the local ngrok config (idempotent)
+  npx -y ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null 2>&1 || true
 
   echo "Starting ngrok tunnel (https://${NGROK_DOMAIN})..."
-  ngrok http "${PORT}" --domain="${NGROK_DOMAIN}" --log=stdout &
+  npx -y ngrok http "${PORT}" --domain="${NGROK_DOMAIN}" --log=stdout &
   TUNNEL_PID=$!
 
 elif [ "$TUNNEL_PROVIDER" = "cloudflare" ]; then
