@@ -35,8 +35,13 @@ export function parseAnubisChallenge(html) {
     const match = html.match(
         /<script id="anubis_challenge" type="application\/json">([\s\S]+?)<\/script>/,
     );
-    const obj = JSON.parse(match[1]);
-    return obj.challenge;
+    if (!match) return null;
+    try {
+        const obj = JSON.parse(match[1]);
+        return obj.challenge;
+    } catch {
+        return null;
+    }
 }
 
 /**
