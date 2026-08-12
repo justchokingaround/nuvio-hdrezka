@@ -2,8 +2,8 @@
 
 HDRezka streams for Nuvio **and** Stremio.
 
-- **Nuvio**: on-device provider plugin (mobile/Apple TV via Nuvio).
-- **Stremio**: serverless addon for TV or desktop clients that don’t speak Nuvio.
+- **Nuvio**: on-device provider plugin (iOS / Android / Apple TV via Nuvio).
+- **Stremio**: addon for TV / desktop / web clients.
 
 Active mirror: **hdrezka.website**.
 
@@ -21,45 +21,55 @@ Active mirror: **hdrezka.website**.
 ```
 
 ```
-=== Stremio addon: /stream/movie/tmdb:603.json ===
+=== Stremio addon (local): /stream/movie/tmdb:603.json ===
 10 streams returned
-=== Stremio addon: /stream/series/tmdb:1396:1:1.json ===
+=== Stremio addon (local): /stream/series/tmdb:1396:1:1.json ===
 14 streams returned
 ```
 
 ## Install as Nuvio plugin
 
-Paste this URL into **Nuvio → Settings → Plugins → Add Repository**: And enable **HDRezka**.
+Paste this URL into **Nuvio → Settings → Plugins → Add Repository** and enable **HDRezka**:
 
 ```
 https://raw.githubusercontent.com/justchokingaround/nuvio-hdrezka/main/manifest.json
 ```
 
-## Install as Stremio addon (TV / desktop / web)
+## Use on Stremio / TV
 
-Pick one:
+HDRezka blocks most datacenter IPs (Vercel, Cloudflare Workers, etc.). The most reliable free option is to run the addon on a computer on your home network: that uses the same residential IP that already passed the local test.
 
-### 1. One-click deploy to Vercel (free)
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fjustchokingaround%2Fnuvio-hdrezka&root-directory=stremio-addon)
-
-1. Sign in with GitHub/Vercel.
-2. Set **Root Directory** to `stremio-addon`.
-3. Deploy.
-4. Copy the deployment URL, e.g. `https://nuvio-hdrezka-xyz.vercel.app/`.
-5. In Stremio, go to **Addons → Add Addon URL** and paste:
-   ```
-   https://nuvio-hdrezka-xyz.vercel.app/manifest.json
-   ```
-
-### 2. Deploy from this machine
+### Option A: run the addon on your computer (recommended)
 
 ```bash
 cd stremio-addon
-npx vercel login     # opens browser
 cp ../providers/hdrezka.cjs providers/hdrezka.cjs
-npx vercel --prod
+node addon.js
 ```
+
+The console prints two URLs:
+- `http://127.0.0.1:7000/manifest.json` — for Stremio on the same computer
+- `http://192.168.x.x:7000/manifest.json` — for Stremio on a TV/phone connected to the same Wi-Fi
+
+In Stremio: **Addons → Add Addon URL** and paste the LAN URL.
+
+### Option B: expose it through a free tunnel (access away from home)
+
+```bash
+# Using the same local server as above, then:
+npx ngrok http 7000
+```
+
+Paste the `https://xxxx.ngrok-free.app/manifest.json` URL into Stremio.
+
+For a permanent free tunnel with a custom domain you control, use `cloudflared tunnel` instead.
+
+### Option C: one-click Vercel deploy (may be blocked)
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fjustchokingaround%2Fnuvio-hdrezka&root-directory=stremio-addon)
+
+After deploying, copy the URL and add `/manifest.json` in Stremio.
+**Caveat:** HDRezka often returns `403` / access-error 105 from Vercel IPs, so streams may fail. If it fails, use Option A or B.
 
 ## Files
 
@@ -73,7 +83,7 @@ npx vercel --prod
 | `providers/hdrezka.cjs` | Hermes-compatible CommonJS bundle for Nuvio |
 | `manifest.json` | Nuvio plugin manifest |
 | `build.cjs` | bundle script (`npm run build`) |
-| `stremio-addon/addon.js` | Stremio addon interface wrapper |
+| `stremio-addon/addon.js` | Stremio addon interface wrapper + local server |
 | `stremio-addon/api/index.js` | Vercel serverless request handler |
 | `stremio-addon/vercel.json` | Vercel routing |
 
@@ -93,4 +103,4 @@ Submission: `GET /.within.website/x/cmd/anubis/api/pass-challenge?id=<id>&respon
 
 - Dead domains: `hdrezka.ag`, `hdrezka-home.tv`.
 - `X-Hdrezka-Android-App` bypass headers now trigger `403` on `hdrezka.website`.
-- Search endpoint still works without Anubis, so the main work is solving Anubis for page/CDN access.
+- Search endpoint still works without Anubis; the main work is solving Anubis for page/CDN access.

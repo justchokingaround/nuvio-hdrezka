@@ -5,7 +5,7 @@
  * serverless deployment.
  *
  * The bundled HDRezka provider (built from src/ via build.cjs) is
- * required in. We assume it's at ../providers/hdrezka.js.
+ * required in. We assume it's at ./providers/hdrezka.cjs.
  */
 
 const { addonBuilder } = require('stremio-addon-sdk');
@@ -70,4 +70,37 @@ function adaptToStremio(s) {
     return out;
 }
 
-module.exports = builder.getInterface();
+const addonInterface = builder.getInterface();
+
+/**
+ * Manual node server entry for local / home-network use.
+ *
+ * For Stremio on a TV that is on the same network as this computer,
+ * start this and add the LAN URL to Stremio:
+ *   http://<this-computer-ip>:7000/manifest.json
+ *
+ * For remote access use a free tunnel such as ngrok or cloudflared
+ * and add the tunnel URL plus /manifest.json.
+ */
+if (require.main === module) {
+    const { serveHTTP } = require('stremio-addon-sdk');
+    const os = require('os');
+    const port = process.env.PORT || 7000;
+
+    // Find a non-internal IPv4 address to show the user.
+    const ifaces = os.networkInterfaces();
+    const lan = Object.values(ifaces)
+        .flat()
+        .find((iface) => iface && iface.family === 'IPv4' && !iface.internal);
+
+    serveHTTP(addonInterface, { port }).then(() => {
+        console.log('\n--- Stremio addon running ---');
+        console.log(`Local:    http://127.0.0.1:${port}/manifest.json`);
+        if (lan) {
+            console.log(`Same-LAN: http://${lan.address}:${port}/manifest.json`);
+        }
+        console.log('-----------------------------\n');
+    });
+}
+
+module.exports = addonInterface;
