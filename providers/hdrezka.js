@@ -184,42 +184,79 @@ function postForm(_0, _1) {
 }
 
 // src/hdrezka/search.js
-function searchHdrezka(title, year, mediaType) {
+function searchHdrezka(title, originalTitle, year, mediaType) {
   return __async(this, null, function* () {
-    const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(title)}`;
-    const html = yield fetchText(url);
-    const candidates = [];
-    const re = /<a href="([^"]+)"><span class="enty">([^<]+)<\/span>[^<]*?\(([^)]+)\)/g;
-    let m;
-    while ((m = re.exec(html)) !== null) {
-      const itemUrl = m[1];
-      const itemTitle = m[2].trim();
-      const itemYearRaw = m[3].trim();
-      const yearMatch = itemYearRaw.match(/(\d{4})/);
-      const itemYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
-      const itemType = itemUrl.includes("/series/") ? "tv" : itemUrl.includes("/films/") ? "movie" : null;
-      const idMatch = itemUrl.match(/\/(\d+)-[^/]+\.html$/);
-      candidates.push({
-        id: idMatch ? idMatch[1] : null,
-        url: itemUrl,
-        title: itemTitle,
-        year: itemYear,
-        type: itemType
-      });
+    const seenUrls = /* @__PURE__ */ new Set();
+    const all = [];
+    const baseQueries = [
+      originalTitle,
+      title
+    ].filter(Boolean);
+    const queries = [];
+    for (const q of baseQueries) {
+      queries.push(q);
+      if (year) queries.push(`${q} ${year}`);
     }
-    return rankCandidates(candidates, { title, year, mediaType });
+    for (const query of queries) {
+      const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(query)}`;
+      let html;
+      try {
+        html = yield fetchText(url);
+      } catch (e) {
+        console.error(`[HDRezka] search failed for "${query}": ${e.message}`);
+        continue;
+      }
+      for (const c of parseSearchHtml(html)) {
+        if (!seenUrls.has(c.url)) {
+          seenUrls.add(c.url);
+          all.push(c);
+        }
+      }
+    }
+    return rankCandidates(all, { title, originalTitle, year, mediaType });
   });
 }
-function rankCandidates(candidates, { title, year, mediaType }) {
+function parseSearchHtml(html) {
+  const candidates = [];
+  const re = /<a href="([^"]+)"><span class="enty">([^<]+)<\/span>[^<]*?\(([^)]+)\)/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const itemUrl = m[1];
+    const itemTitle = m[2].trim();
+    const itemYearRaw = m[3].trim();
+    const yearMatch = itemYearRaw.match(/(\d{4})/);
+    const itemYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+    const itemType = itemUrl.includes("/series/") || itemUrl.includes("/animation/") ? "tv" : itemUrl.includes("/films/") ? "movie" : null;
+    const idMatch = itemUrl.match(/\/(\d+)-[^/]+\.html$/);
+    candidates.push({
+      id: idMatch ? idMatch[1] : null,
+      url: itemUrl,
+      title: itemTitle,
+      year: itemYear,
+      type: itemType
+    });
+  }
+  return candidates;
+}
+function rankCandidates(candidates, { title, originalTitle, year, mediaType }) {
   if (candidates.length === 0) return [];
   const norm = (s) => (s || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-  const targetType = mediaType === "tv" ? "tv" : "movie";
+  const targetType = mediaType === "tv" || mediaType === "anime" ? "tv" : "movie";
+  const normalizedTargets = [title, originalTitle].filter(Boolean).map(norm).filter(Boolean);
   const scored = candidates.map((c) => {
     let score = 0;
     if (c.type === targetType) score += 10;
-    if (year && c.year === year) score += 20;
-    if (norm(c.title) === norm(title)) score += 30;
-    else if (norm(c.title).includes(norm(title))) score += 5;
+    if (year && c.year === year) score += 50;
+    const normalizedTitle = norm(c.title);
+    for (const t of normalizedTargets) {
+      if (normalizedTitle === t) {
+        score += 40;
+        break;
+      }
+      if (normalizedTitle.includes(t) || t.includes(normalizedTitle)) {
+        score += 8;
+      }
+    }
     return { c, score };
   });
   scored.sort((a, b) => b.score - a.score);
@@ -501,7 +538,8 @@ function extractTranslatorAndId(html, mediaType) {
   if (html.includes('data-translator_id="238"')) {
     return { postId, translatorId: "238" };
   }
-  const fn = mediaType === "tv" ? "initCDNSeriesEvents" : "initCDNMoviesEvents";
+  const isSeries = mediaType === "tv" || mediaType === "anime";
+  const fn = isSeries ? "initCDNSeriesEvents" : "initCDNMoviesEvents";
   const re = new RegExp(`sof\\.tv\\.${fn}\\(\\s*(\\d+)\\s*,\\s*(\\d+)`);
   const m = html.match(re);
   if (m) {
@@ -513,60 +551,156 @@ function extractTranslatorAndId(html, mediaType) {
   }
   return { postId, translatorId: null };
 }
+function extractTranslators(html) {
+  const list = [];
+  const re = /data-translator_id="(\d+)"[^>]*>([^<]+)/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    list.push({ id: m[1], name: m[2].trim() });
+  }
+  return list;
+}
+function isAllowedTranslator(name) {
+  const lower = normalizeForCompare(name);
+  const desired = [
+    "\u043E\u0440\u0438\u0433\u0438\u043D\u0430\u043B",
+    "original",
+    "\u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A",
+    "english",
+    "en"
+  ];
+  if (desired.some((kw) => lower.includes(kw))) return true;
+  const blocked = [
+    "\u0443\u043A\u0440\u0430\u0438\u043D",
+    "\u0443\u043A\u0440\u0430\u0457\u043D",
+    "ukrainian",
+    "\u0433\u0440\u0443\u0437\u0438\u043D",
+    "georgian",
+    "\u0431\u0435\u043B\u043E\u0440\u0443\u0441",
+    "\u0431\u0456\u043B\u043E\u0440\u0443\u0441",
+    "belarusian",
+    "\u043A\u0430\u0437\u0430\u0445",
+    "kazakh",
+    "\u0430\u0440\u043C\u044F\u043D",
+    "armenian",
+    "\u0430\u0437\u0435\u0440\u0431\u0430\u0439\u0434\u0436\u0430\u043D",
+    "azerbaijani",
+    "\u043B\u0438\u0442\u043E\u0432\u0441\u043A",
+    "\u043B\u0438\u0442\u0432\u0430",
+    "lithuanian",
+    "\u043B\u0430\u0442\u044B\u0448",
+    "latvian",
+    "\u044D\u0441\u0442\u043E\u043D",
+    "estonian",
+    "\u043C\u043E\u043B\u0434\u0430\u0432",
+    "moldovan",
+    "\u0442\u0430\u0434\u0436\u0438\u043A",
+    "tajik",
+    "\u043A\u0438\u0440\u0433\u0438\u0437",
+    "kyrgyz",
+    "\u0443\u0437\u0431\u0435\u043A",
+    "uzbek",
+    "\u0438\u0441\u043F\u0430\u043D",
+    "spanish",
+    "\u0444\u0440\u0430\u043D\u0446\u0443\u0437",
+    "french",
+    "\u043D\u0435\u043C\u0435\u0446\u043A",
+    "german",
+    "\u0438\u0442\u0430\u043B\u044C\u044F\u043D",
+    "italian",
+    "\u043F\u043E\u043B\u044C\u0441\u043A",
+    "polish",
+    "\u0442\u0443\u0440\u0435\u0446\u043A",
+    "turkish",
+    "\u043A\u0438\u0442\u0430\u0439\u0441\u043A",
+    "chinese",
+    "\u044F\u043F\u043E\u043D\u0441\u043A",
+    "japanese",
+    "\u043A\u043E\u0440\u0435\u0439\u0441\u043A",
+    "korean"
+  ];
+  if (blocked.some((kw) => lower.includes(kw))) return false;
+  if (/[\u0400-\u04FF]/.test(name)) return true;
+  const knownRussian = /* @__PURE__ */ new Set([
+    "ddv",
+    "lostfilm",
+    "newstudio",
+    "amedia",
+    "ideafilm",
+    "novafilm",
+    "topfilm",
+    "hdrezka studio"
+  ]);
+  if (knownRussian.has(lower)) return true;
+  return true;
+}
+function normalizeForCompare(str) {
+  return str.toLowerCase().replace(/[\u0301\u0300\u0306]/g, "").replace(/[\"'()]/g, "").trim();
+}
 function deobfuscateStreams(obfuscated) {
-  if (!obfuscated) return [];
-  let stripped = obfuscated.replace("#h", "").split("//_//").join("");
-  const trashChars = ["@", "#", "!", "^", "$"];
-  const trashSet = /* @__PURE__ */ new Set();
-  for (let len = 2; len <= 3; len++) {
-    const buckets = Array.from({ length: len }, () => trashChars);
-    let combos = [""];
-    for (const bucket of buckets) {
-      const next = [];
-      for (const prefix of combos) {
-        for (const c of bucket) {
-          next.push(prefix + c);
+  if (!obfuscated) throw new Error("STAGE5_NO_STREAMS empty obfuscated url");
+  let decoded = "";
+  const looksPlain = obfuscated.trim().startsWith("[") && obfuscated.includes("]http");
+  if (looksPlain) {
+    decoded = obfuscated;
+  } else {
+    let stripped = obfuscated.replace("#h", "").split("//_//").join("");
+    const trashChars = ["@", "#", "!", "^", "$"];
+    const trashSet = /* @__PURE__ */ new Set();
+    for (let len = 2; len <= 3; len++) {
+      const buckets = Array.from({ length: len }, () => trashChars);
+      let combos = [""];
+      for (const bucket of buckets) {
+        const next = [];
+        for (const prefix of combos) {
+          for (const c of bucket) {
+            next.push(prefix + c);
+          }
         }
+        combos = next;
       }
-      combos = next;
+      for (const combo of combos) {
+        trashSet.add(encodeBase64(combo));
+      }
     }
-    for (const combo of combos) {
-      trashSet.add(encodeBase64(combo));
+    const sortedTrash = Array.from(trashSet).sort((a, b) => b.length - a.length);
+    for (const t of sortedTrash) {
+      stripped = stripped.split(t).join("");
     }
-  }
-  const sortedTrash = Array.from(trashSet).sort((a, b) => b.length - a.length);
-  for (const t of sortedTrash) {
-    stripped = stripped.split(t).join("");
-  }
-  let decoded;
-  try {
-    decoded = decodeBase64Utf8(stripped);
-  } catch (e) {
-    decoded = stripped;
+    try {
+      decoded = decodeBase64Utf8(stripped);
+    } catch (e) {
+      decoded = stripped;
+    }
   }
   const out = [];
   const re = /\[([^\]]+)\]([^,]+)/g;
   let m;
   while ((m = re.exec(decoded)) !== null) {
     const quality = m[1].trim();
-    const urls = m[2].split(/\s+or\s+/);
-    for (const url of urls) {
-      const trimmed = url.trim();
-      if (trimmed.startsWith("http")) {
-        out.push({ quality, url: trimmed });
-      }
+    const url = m[2].split(/\s+or\s+/).map((u) => u.trim()).find((u) => u.startsWith("http") && !u.includes(":hls:"));
+    if (url) {
+      out.push({ quality, url });
     }
+  }
+  if (out.length === 0) {
+    throw new Error(`STAGE5_NO_STREAMS raw=${obfuscated.slice(0, 80)} decoded=${decoded.slice(0, 80)}`);
   }
   return out;
 }
 function parseSubtitles(obfuscated) {
   if (!obfuscated) return [];
-  const stripped = obfuscated.replace("#h", "").split("//_//").join("");
   let decoded;
-  try {
-    decoded = decodeBase64Utf8(stripped);
-  } catch (e) {
-    decoded = stripped;
+  const looksPlain = obfuscated.trim().startsWith("[") && obfuscated.includes("]http");
+  if (looksPlain) {
+    decoded = obfuscated;
+  } else {
+    const stripped = obfuscated.replace("#h", "").split("//_//").join("");
+    try {
+      decoded = decodeBase64Utf8(stripped);
+    } catch (e) {
+      decoded = stripped;
+    }
   }
   const out = [];
   const re = /\[([^\]]+)\](https?:\/\/\S+?)(?=,\[|$)/g;
@@ -578,84 +712,180 @@ function parseSubtitles(obfuscated) {
 }
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
+    const resolved = yield resolveTmdbId(tmdbId, mediaType);
+    tmdbId = resolved.id;
+    mediaType = resolved.mediaType;
     const tmdb = yield fetchTmdb(tmdbId, mediaType);
     const title = tmdb.title;
     const year = tmdb.year;
-    if (!title) return [];
-    const candidates = yield searchHdrezka(title, year, mediaType);
-    if (candidates.length === 0) return [];
+    if (!title) throw new Error(`STAGE1_NO_TITLE (tmdb=${tmdbId})`);
+    const candidates = yield searchHdrezka(title, tmdb.originalTitle, year, mediaType);
+    if (candidates.length === 0) throw new Error(`STAGE2_NO_CANDIDATES title=${title}`);
     const best = candidates[0];
     const pageUrl = best.url.startsWith("http") ? best.url : `${BASE_URL}${best.url.startsWith("/") ? "" : "/"}${best.url}`;
     const html = yield fetchPage(pageUrl);
-    const { translatorId } = extractTranslatorAndId(html, mediaType);
-    if (!translatorId) return [];
-    const postId = best.id || extractTranslatorAndId(html, mediaType).postId;
+    const { postId, translatorId: defaultTranslatorId } = extractTranslatorAndId(html, mediaType);
+    if (!postId) throw new Error("STAGE3_NO_POST_ID");
+    let translators = extractTranslators(html).filter((t) => isAllowedTranslator(t.name));
+    if (translators.length === 0 && defaultTranslatorId) {
+      translators = [{ id: defaultTranslatorId, name: "\u0414\u0443\u0431\u043B\u044F\u0436" }];
+    }
+    if (translators.length === 0) throw new Error("STAGE3_NO_TRANSLATOR");
     const favs = generateFavs();
-    const form = {
+    const isTv = mediaType === "tv" || mediaType === "anime";
+    const baseForm = {
       id: postId,
-      translator_id: translatorId,
-      favs,
-      action: mediaType === "tv" ? "get_stream" : "get_movie"
+      action: isTv ? "get_stream" : "get_movie"
     };
-    if (mediaType === "tv") {
-      form.season = season;
-      form.episode = episode;
+    if (isTv) {
+      baseForm.season = season;
+      baseForm.episode = episode;
     }
-    let cdn;
-    try {
-      cdn = yield postForm("/ajax/get_cdn_series/", form);
-    } catch (e) {
-      console.error("[HDRezka] CDN POST failed:", e.message);
-      return [];
+    const out = [];
+    const seenKeys = /* @__PURE__ */ new Set();
+    for (const translator of translators) {
+      let cdn;
+      try {
+        cdn = yield postForm("/ajax/get_cdn_series/", __spreadProps(__spreadValues({}, baseForm), {
+          translator_id: translator.id,
+          favs
+        }));
+      } catch (e) {
+        console.error(`[HDRezka] CDN failed for translator ${translator.name}: ${e.message}`);
+        continue;
+      }
+      if (!cdn.success || !cdn.url) continue;
+      const streams = deobfuscateStreams(cdn.url);
+      const subs = parseSubtitles(cdn.subtitle);
+      const cleanSubs = subs.map((s) => ({
+        id: s.url,
+        language: s.language,
+        lang: s.language,
+        label: s.language,
+        url: s.url,
+        type: "vtt",
+        hasCorsRestrictions: false
+      }));
+      for (const s of streams) {
+        if (!s.url || s.url === "null" || s.url.includes(":hls:")) continue;
+        const quality = s.quality.replace(/<[^>]+>/g, "").trim();
+        if (/\bultra\b|\bprem\b/i.test(quality)) continue;
+        const dedupeKey = `${translator.name}|${quality}`;
+        if (seenKeys.has(dedupeKey)) continue;
+        seenKeys.add(dedupeKey);
+        const displayName = `HDRezka \xB7 ${translator.name}`;
+        out.push({
+          name: displayName,
+          title: formatStreamTitle(
+            title,
+            year,
+            mediaType,
+            season,
+            episode,
+            `${quality} \xB7 ${translator.name}`
+          ),
+          url: s.url,
+          quality,
+          headers: {
+            Referer: pageUrl,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          },
+          subtitles: cleanSubs.length > 0 ? cleanSubs : void 0,
+          type: "mp4"
+        });
+      }
     }
-    if (!cdn.success || !cdn.url) return [];
-    const streams = deobfuscateStreams(cdn.url);
-    const subs = parseSubtitles(cdn.subtitle);
-    const cleanSubs = subs.map((s) => ({
-      id: s.url,
-      language: s.language,
-      url: s.url,
-      type: "vtt",
-      hasCorsRestrictions: false
-    }));
-    return streams.filter((s) => s.url && s.url !== "null").map((s) => ({
-      name: "HDRezka",
-      title: formatStreamTitle(title, year, mediaType, season, episode, s.quality),
-      url: s.url,
-      quality: s.quality,
-      headers: {
-        Referer: pageUrl,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      },
-      subtitles: cleanSubs.length > 0 ? cleanSubs : void 0,
-      type: "direct"
-    }));
+    out.sort((a, b) => {
+      const aq = parseQualityValue(a.quality);
+      const bq = parseQualityValue(b.quality);
+      if (aq !== bq) return bq - aq;
+      return a.name.localeCompare(b.name);
+    });
+    const uniqueQualities = [...new Set(out.map((s) => s.quality))].sort(
+      (a, b) => parseQualityValue(b) - parseQualityValue(a)
+    );
+    const padLen = Math.max(2, String(uniqueQualities.length).length);
+    const qualityRank = new Map(
+      uniqueQualities.map((q, i) => [q, String(i + 1).padStart(padLen, "0")])
+    );
+    for (const s of out) {
+      const rank = qualityRank.get(s.quality);
+      s.name = `${rank}. ${s.name}`;
+    }
+    return out;
   });
+}
+function parseQualityValue(q) {
+  const m = q.match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 function formatStreamTitle(title, year, mediaType, season, episode, quality) {
   const base = `${title}${year ? ` (${year})` : ""} ${quality}`;
-  if (mediaType === "tv") {
+  if (mediaType === "tv" || mediaType === "anime") {
     return `${base} S${season}E${episode}`;
   }
   return base;
 }
+function resolveTmdbId(rawId, mediaType) {
+  return __async(this, null, function* () {
+    const idStr = String(rawId).trim();
+    if (/^\d+$/.test(idStr)) {
+      return { id: idStr, mediaType };
+    }
+    const imdbMatch = idStr.match(/tt\d+/i);
+    if (!imdbMatch) {
+      throw new Error(`Unsupported TMDB/ID format: ${rawId}`);
+    }
+    const imdbId = imdbMatch[0];
+    const apiKey = "439c478a771f35c05022f9feabcca01c";
+    const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${apiKey}&external_source=imdb_id`;
+    const data = yield fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`TMDB find ${r.status}`);
+      return r.json();
+    });
+    const preferTv = mediaType === "tv" || mediaType === "anime";
+    if (preferTv) {
+      if (data.tv_results && data.tv_results.length > 0) {
+        return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || "tv" };
+      }
+      if (data.movie_results && data.movie_results.length > 0) {
+        return { id: String(data.movie_results[0].id), mediaType: "movie" };
+      }
+    } else {
+      if (data.movie_results && data.movie_results.length > 0) {
+        return { id: String(data.movie_results[0].id), mediaType: "movie" };
+      }
+      if (data.tv_results && data.tv_results.length > 0) {
+        return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || "tv" };
+      }
+    }
+    throw new Error(`IMDb ${imdbId} not found on TMDB`);
+  });
+}
 function fetchTmdb(tmdbId, mediaType) {
   return __async(this, null, function* () {
     const apiKey = "439c478a771f35c05022f9feabcca01c";
-    const path = mediaType === "tv" ? "tv" : "movie";
+    const path = mediaType === "tv" || mediaType === "anime" ? "tv" : "movie";
     const url = `https://api.themoviedb.org/3/${path}/${tmdbId}?api_key=${apiKey}`;
     try {
       const data = yield fetch(url).then((r) => {
         if (!r.ok) throw new Error(`TMDB ${r.status}`);
         return r.json();
       });
-      const title = mediaType === "tv" ? data.name : data.title;
-      const date = mediaType === "tv" ? data.first_air_date : data.release_date;
+      const isTv = mediaType === "tv" || mediaType === "anime";
+      const title = isTv ? data.name : data.title;
+      const originalTitle = isTv ? data.original_name : data.original_title;
+      const date = isTv ? data.first_air_date : data.release_date;
       const year = date ? parseInt(date.substring(0, 4), 10) : null;
-      return { title, year };
+      return {
+        title,
+        originalTitle: originalTitle || title,
+        originalLanguage: data.original_language || null,
+        year
+      };
     } catch (e) {
       console.error("[HDRezka] TMDB lookup failed:", e.message);
-      return { title: null, year: null };
+      return { title: null, originalTitle: null, originalLanguage: null, year: null };
     }
   });
 }
@@ -722,15 +952,25 @@ function getStreams2(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
       console.log(`[HDRezka] ${mediaType} ${tmdbId} S${season != null ? season : "-"}E${episode != null ? episode : "-"}`);
-      return yield getStreams(tmdbId, mediaType, season, episode);
-    } catch (error) {
-      console.error("[HDRezka] getStreams failed:", error.message);
+      const streams = yield getStreams(tmdbId, mediaType, season, episode);
+      if (streams.length > 0) return streams;
       return [
         {
-          name: "HDRezka-ERR",
-          title: `ERR: ${error.message || error}`,
-          url: "https://example.com/diagnostic.mp4",
-          quality: "crash"
+          name: "HDRezka-DIAG",
+          title: `DIAG tmdb=${tmdbId || "empty"} type=${mediaType || "empty"} S${season != null ? season : "-"}E${episode != null ? episode : "-"}`,
+          url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+          quality: "diagnostic"
+        }
+      ];
+    } catch (error) {
+      const msg = `${error.message || error}`.replace(/\s+/g, " ").trim();
+      console.error("[HDRezka] getStreams failed:", msg);
+      return [
+        {
+          name: `HDRezka-ERR: ${msg.slice(0, 70)}`,
+          title: `ERR: ${msg}`,
+          url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+          quality: `${mediaType} ${tmdbId} S${season != null ? season : "-"}E${episode != null ? episode : "-"}`
         }
       ];
     }

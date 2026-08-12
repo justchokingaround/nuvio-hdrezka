@@ -63,7 +63,8 @@ export function extractTranslatorAndId(html, mediaType) {
     }
 
     // Fallback: regex the initCDN*Events call
-    const fn = mediaType === 'tv' ? 'initCDNSeriesEvents' : 'initCDNMoviesEvents';
+    const isSeries = mediaType === 'tv' || mediaType === 'anime';
+    const fn = isSeries ? 'initCDNSeriesEvents' : 'initCDNMoviesEvents';
     const re = new RegExp(`sof\\.tv\\.${fn}\\(\\s*(\\d+)\\s*,\\s*(\\d+)`);
     const m = html.match(re);
     if (m) {
@@ -80,6 +81,86 @@ export function extractTranslatorAndId(html, mediaType) {
 }
 
 /**
+ * Pull all translators from the page's `#translators-list`.
+ * Returns [{ id, name }]. Typical names are Russian dubs like "Дубляж",
+ * "Гоблин", "Многоголосый закадровый", etc.
+ */
+export function extractTranslators(html) {
+    const list = [];
+    const re = /data-translator_id="(\d+)"[^>]*>([^<]+)/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        list.push({ id: m[1], name: m[2].trim() });
+    }
+    return list;
+}
+
+function isAllowedTranslator(name) {
+    const lower = normalizeForCompare(name);
+
+    // Explicitly desired options: original track and English dubs.
+    const desired = [
+        'оригинал', 'original',
+        'английск', 'english', 'en',
+    ];
+    if (desired.some((kw) => lower.includes(kw))) return true;
+
+    // Block other non-Russian language dubs.
+    const blocked = [
+        'украин', 'україн', 'ukrainian',
+        'грузин', 'georgian',
+        'белорус', 'білорус', 'belarusian',
+        'казах', 'kazakh',
+        'армян', 'armenian',
+        'азербайджан', 'azerbaijani',
+        'литовск', 'литва', 'lithuanian',
+        'латыш', 'latvian',
+        'эстон', 'estonian',
+        'молдав', 'moldovan',
+        'таджик', 'tajik',
+        'киргиз', 'kyrgyz',
+        'узбек', 'uzbek',
+        'испан', 'spanish',
+        'француз', 'french',
+        'немецк', 'german',
+        'итальян', 'italian',
+        'польск', 'polish',
+        'турецк', 'turkish',
+        'китайск', 'chinese',
+        'японск', 'japanese',
+        'корейск', 'korean',
+    ];
+    if (blocked.some((kw) => lower.includes(kw))) return false;
+
+    // Keep Cyrillic-named dubs (covers Russian voiceovers) and known Latin-named
+    // Russian/CIS studios. Unknown Latin-only names are allowed because they may
+    // be English dubs like "CP Digital" / "Flarrow Films".
+    if (/[\u0400-\u04FF]/.test(name)) return true;
+
+    const knownRussian = new Set([
+        'ddv',
+        'lostfilm',
+        'newstudio',
+        'amedia',
+        'ideafilm',
+        'novafilm',
+        'topfilm',
+        'hdrezka studio',
+    ]);
+    if (knownRussian.has(lower)) return true;
+
+    return true;
+}
+
+function normalizeForCompare(str) {
+    return str
+        .toLowerCase()
+        .replace(/[\u0301\u0300\u0306]/g, '')
+        .replace(/[\"'()]/g, '')
+        .trim();
+}
+
+/**
  * The string HDRezka returns in `url` is a base64 payload with two layers
  * of obfuscation:
  *   1. The string is split by `//_//`. We join those pieces back.
@@ -89,45 +170,56 @@ export function extractTranslatorAndId(html, mediaType) {
  *      `[quality]url,[quality]url` (or ` or `-joined alternates).
  */
 export function deobfuscateStreams(obfuscated) {
-    if (!obfuscated) return [];
+    if (!obfuscated) throw new Error('STAGE5_NO_STREAMS empty obfuscated url');
 
-    // Strip the leading `#h` marker and rejoin around `//_//`.
-    let stripped = obfuscated.replace('#h', '').split('//_//').join('');
+    let decoded = '';
 
-    // Build the set of base64-encoded trash strings.
-    const trashChars = ['@', '#', '!', '^', '$'];
-    const trashSet = new Set();
-    for (let len = 2; len <= 3; len++) {
-        const buckets = Array.from({ length: len }, () => trashChars);
-        // cartesian product
-        let combos = [''];
-        for (const bucket of buckets) {
-            const next = [];
-            for (const prefix of combos) {
-                for (const c of bucket) {
-                    next.push(prefix + c);
+    // CDN can return stream list in two shapes:
+    //   1) plain:     "[360p]url,[480p]url,..."
+    //   2) obfuscated: "#h...//_//...base64+trash..."
+    // If it already looks like the plain shape, skip base64/trash decoding.
+    const looksPlain = obfuscated.trim().startsWith('[') && obfuscated.includes(']http');
+
+    if (looksPlain) {
+        decoded = obfuscated;
+    } else {
+        // Strip the leading `#h` marker and rejoin around `//_//`.
+        let stripped = obfuscated.replace('#h', '').split('//_//').join('');
+
+        // Build the set of base64-encoded trash strings.
+        const trashChars = ['@', '#', '!', '^', '$'];
+        const trashSet = new Set();
+        for (let len = 2; len <= 3; len++) {
+            const buckets = Array.from({ length: len }, () => trashChars);
+            // cartesian product
+            let combos = [''];
+            for (const bucket of buckets) {
+                const next = [];
+                for (const prefix of combos) {
+                    for (const c of bucket) {
+                        next.push(prefix + c);
+                    }
                 }
+                combos = next;
             }
-            combos = next;
+            for (const combo of combos) {
+                trashSet.add(encodeBase64(combo));
+            }
         }
-        for (const combo of combos) {
-            trashSet.add(encodeBase64(combo));
+
+        // Strip each trash substring. Replace longest first so we don't
+        // accidentally eat a prefix of a longer one.
+        const sortedTrash = Array.from(trashSet).sort((a, b) => b.length - a.length);
+        for (const t of sortedTrash) {
+            stripped = stripped.split(t).join('');
         }
-    }
 
-    // Strip each trash substring. Replace longest first so we don't
-    // accidentally eat a prefix of a longer one.
-    const sortedTrash = Array.from(trashSet).sort((a, b) => b.length - a.length);
-    for (const t of sortedTrash) {
-        stripped = stripped.split(t).join('');
-    }
-
-    // The remainder is base64 → UTF-8 `[quality]url,[quality]url[,...]`
-    let decoded;
-    try {
-        decoded = decodeBase64Utf8(stripped);
-    } catch {
-        decoded = stripped;
+        // The remainder is base64 → UTF-8 `[quality]url,[quality]url[,...]`
+        try {
+            decoded = decodeBase64Utf8(stripped);
+        } catch {
+            decoded = stripped;
+        }
     }
 
     const out = [];
@@ -135,14 +227,18 @@ export function deobfuscateStreams(obfuscated) {
     let m;
     while ((m = re.exec(decoded)) !== null) {
         const quality = m[1].trim();
-        // A quality entry may be `url1 or url2` — split alternates.
-        const urls = m[2].split(/\s+or\s+/);
-        for (const url of urls) {
-            const trimmed = url.trim();
-            if (trimmed.startsWith('http')) {
-                out.push({ quality, url: trimmed });
-            }
+        // A quality entry may contain alternates (`url1 or url2`).
+        // Prefer the direct `.mp4` URL; ignore the `:hls:manifest.m3u8` one.
+        const url = m[2]
+            .split(/\s+or\s+/)
+            .map((u) => u.trim())
+            .find((u) => u.startsWith('http') && !u.includes(':hls:'));
+        if (url) {
+            out.push({ quality, url });
         }
+    }
+    if (out.length === 0) {
+        throw new Error(`STAGE5_NO_STREAMS raw=${obfuscated.slice(0, 80)} decoded=${decoded.slice(0, 80)}`);
     }
     return out;
 }
@@ -153,14 +249,18 @@ export function deobfuscateStreams(obfuscated) {
  */
 export function parseSubtitles(obfuscated) {
     if (!obfuscated) return [];
-    // Subtitles have the same `//_//` + trash pattern, so reuse the
-    // deobfuscator.
-    const stripped = obfuscated.replace('#h', '').split('//_//').join('');
+
     let decoded;
-    try {
-        decoded = decodeBase64Utf8(stripped);
-    } catch {
-        decoded = stripped;
+    const looksPlain = obfuscated.trim().startsWith('[') && obfuscated.includes(']http');
+    if (looksPlain) {
+        decoded = obfuscated;
+    } else {
+        const stripped = obfuscated.replace('#h', '').split('//_//').join('');
+        try {
+            decoded = decodeBase64Utf8(stripped);
+        } catch {
+            decoded = stripped;
+        }
     }
 
     const out = [];
@@ -202,87 +302,191 @@ export function parseTranslatorsMeta(rawJson) {
  * For TV shows we also accept season/episode.
  */
 export async function getStreams(tmdbId, mediaType, season, episode) {
-    // 1. TMDB lookup so we know what to search for.
+    // 1. Some Nuvio sources pass internal/external IDs like
+    //    "meteor:media:imdb:tt0434706". Resolve those to a numeric TMDB ID.
+    const resolved = await resolveTmdbId(tmdbId, mediaType);
+    tmdbId = resolved.id;
+    mediaType = resolved.mediaType;
     const tmdb = await fetchTmdb(tmdbId, mediaType);
     const title = tmdb.title;
     const year = tmdb.year;
-    if (!title) return [];
+    if (!title) throw new Error(`STAGE1_NO_TITLE (tmdb=${tmdbId})`);
 
-    // 2. Search HDRezka. Pick the best match by title + year + type.
-    const candidates = await searchHdrezka(title, year, mediaType);
-    if (candidates.length === 0) return [];
+    // 2. Search HDRezka. Search by localized and original titles so that
+    //    Russian films like "Брат" are matched correctly.
+    const candidates = await searchHdrezka(title, tmdb.originalTitle, year, mediaType);
+    if (candidates.length === 0) throw new Error(`STAGE2_NO_CANDIDATES title=${title}`);
 
     const best = candidates[0];
     const pageUrl = best.url.startsWith('http')
         ? best.url
         : `${BASE_URL}${best.url.startsWith('/') ? '' : '/'}${best.url}`;
 
-    // 3. Load the page to harvest the translator ID.
+    // 3. Load the page to harvest the translator list and post ID.
     const html = await fetchPage(pageUrl);
-    const { translatorId } = extractTranslatorAndId(html, mediaType);
-    if (!translatorId) return [];
+    const { postId, translatorId: defaultTranslatorId } = extractTranslatorAndId(html, mediaType);
+    if (!postId) throw new Error('STAGE3_NO_POST_ID');
 
-    // 4. POST to the CDN endpoint. Pass the post ID if we could find one,
-    //    otherwise fall back to the candidate ID we found in search.
-    const postId = best.id || extractTranslatorAndId(html, mediaType).postId;
+    let translators = extractTranslators(html).filter((t) => isAllowedTranslator(t.name));
+    if (translators.length === 0 && defaultTranslatorId) {
+        translators = [{ id: defaultTranslatorId, name: 'Дубляж' }];
+    }
+    if (translators.length === 0) throw new Error('STAGE3_NO_TRANSLATOR');
+
     const favs = generateFavs();
-
-    const form = {
+    const isTv = mediaType === 'tv' || mediaType === 'anime';
+    const baseForm = {
         id: postId,
-        translator_id: translatorId,
-        favs,
-        action: mediaType === 'tv' ? 'get_stream' : 'get_movie',
+        action: isTv ? 'get_stream' : 'get_movie',
     };
-    if (mediaType === 'tv') {
-        form.season = season;
-        form.episode = episode;
+    if (isTv) {
+        baseForm.season = season;
+        baseForm.episode = episode;
     }
 
-    let cdn;
-    try {
-        cdn = await postForm('/ajax/get_cdn_series/', form);
-    } catch (e) {
-        console.error('[HDRezka] CDN POST failed:', e.message);
-        return [];
-    }
+    const out = [];
+    const seenKeys = new Set();
+    for (const translator of translators) {
+        let cdn;
+        try {
+            cdn = await postForm('/ajax/get_cdn_series/', {
+                ...baseForm,
+                translator_id: translator.id,
+                favs,
+            });
+        } catch (e) {
+            console.error(`[HDRezka] CDN failed for translator ${translator.name}: ${e.message}`);
+            continue;
+        }
 
-    if (!cdn.success || !cdn.url) return [];
+        if (!cdn.success || !cdn.url) continue;
 
-    const streams = deobfuscateStreams(cdn.url);
-    const subs = parseSubtitles(cdn.subtitle);
-
-    // Filter out null URLs (premium-only qualities) and tag with subs.
-    const cleanSubs = subs.map((s) => ({
-        id: s.url,
-        language: s.language,
-        url: s.url,
-        type: 'vtt',
-        hasCorsRestrictions: false,
-    }));
-
-    return streams
-        .filter((s) => s.url && s.url !== 'null')
-        .map((s) => ({
-            name: 'HDRezka',
-            title: formatStreamTitle(title, year, mediaType, season, episode, s.quality),
+        const streams = deobfuscateStreams(cdn.url);
+        const subs = parseSubtitles(cdn.subtitle);
+        const cleanSubs = subs.map((s) => ({
+            id: s.url,
+            language: s.language,
+            lang: s.language,
+            label: s.language,
             url: s.url,
-            quality: s.quality,
-            headers: {
-                Referer: pageUrl,
-                'User-Agent':
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            },
-            subtitles: cleanSubs.length > 0 ? cleanSubs : undefined,
-            type: 'direct',
+            type: 'vtt',
+            hasCorsRestrictions: false,
         }));
+
+        for (const s of streams) {
+            if (!s.url || s.url === 'null' || s.url.includes(':hls:')) continue;
+            const quality = s.quality.replace(/<[^>]+>/g, '').trim();
+            if (/\bultra\b|\bprem\b/i.test(quality)) continue;
+
+            const dedupeKey = `${translator.name}|${quality}`;
+            if (seenKeys.has(dedupeKey)) continue;
+            seenKeys.add(dedupeKey);
+
+            const displayName = `HDRezka · ${translator.name}`;
+            out.push({
+                name: displayName,
+                title: formatStreamTitle(
+                    title,
+                    year,
+                    mediaType,
+                    season,
+                    episode,
+                    `${quality} · ${translator.name}`
+                ),
+                url: s.url,
+                quality,
+                headers: {
+                    Referer: pageUrl,
+                    'User-Agent':
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                },
+                subtitles: cleanSubs.length > 0 ? cleanSubs : undefined,
+                type: 'mp4',
+            });
+        }
+    }
+
+    out.sort((a, b) => {
+        const aq = parseQualityValue(a.quality);
+        const bq = parseQualityValue(b.quality);
+        if (aq !== bq) return bq - aq;
+        return a.name.localeCompare(b.name);
+    });
+
+    // Nuvio sorts the list by the bold `name` field. The name starts with
+    // "HDRezka ·", so the first differing character is the digit in the
+    // quality, which sorts "1080p" before "360p". Prefix the name with a
+    // descending quality rank so the on-device sort matches our intended order.
+    const uniqueQualities = [...new Set(out.map((s) => s.quality))].sort(
+        (a, b) => parseQualityValue(b) - parseQualityValue(a)
+    );
+    const padLen = Math.max(2, String(uniqueQualities.length).length);
+    const qualityRank = new Map(
+        uniqueQualities.map((q, i) => [q, String(i + 1).padStart(padLen, '0')])
+    );
+    for (const s of out) {
+        const rank = qualityRank.get(s.quality);
+        s.name = `${rank}. ${s.name}`;
+    }
+
+    return out;
+}
+
+function parseQualityValue(q) {
+    const m = q.match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : 0;
 }
 
 function formatStreamTitle(title, year, mediaType, season, episode, quality) {
-    const base = `${title}${year ? ` (${year})` : ''} ${quality}`;
-    if (mediaType === 'tv') {
+        const base = `${title}${year ? ` (${year})` : ''} ${quality}`;
+    if (mediaType === 'tv' || mediaType === 'anime') {
         return `${base} S${season}E${episode}`;
     }
     return base;
+}
+
+/**
+ * Convert non-numeric IDs (e.g. "meteor:media:imdb:tt0434706") to a numeric
+ * TMDB ID. Plain numeric IDs are returned as-is.
+ */
+async function resolveTmdbId(rawId, mediaType) {
+    const idStr = String(rawId).trim();
+
+    if (/^\d+$/.test(idStr)) {
+        return { id: idStr, mediaType };
+    }
+
+    const imdbMatch = idStr.match(/tt\d+/i);
+    if (!imdbMatch) {
+        throw new Error(`Unsupported TMDB/ID format: ${rawId}`);
+    }
+    const imdbId = imdbMatch[0];
+
+    const apiKey = '439c478a771f35c05022f9feabcca01c';
+    const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${apiKey}&external_source=imdb_id`;
+    const data = await fetch(url).then((r) => {
+        if (!r.ok) throw new Error(`TMDB find ${r.status}`);
+        return r.json();
+    });
+
+    const preferTv = mediaType === 'tv' || mediaType === 'anime';
+    if (preferTv) {
+        if (data.tv_results && data.tv_results.length > 0) {
+            return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || 'tv' };
+        }
+        if (data.movie_results && data.movie_results.length > 0) {
+            return { id: String(data.movie_results[0].id), mediaType: 'movie' };
+        }
+    } else {
+        if (data.movie_results && data.movie_results.length > 0) {
+            return { id: String(data.movie_results[0].id), mediaType: 'movie' };
+        }
+        if (data.tv_results && data.tv_results.length > 0) {
+            return { id: String(data.tv_results[0].id), mediaType: data.tv_results[0].media_type || 'tv' };
+        }
+    }
+
+    throw new Error(`IMDb ${imdbId} not found on TMDB`);
 }
 
 /**
@@ -291,20 +495,27 @@ function formatStreamTitle(title, year, mediaType, season, episode, quality) {
  */
 async function fetchTmdb(tmdbId, mediaType) {
     const apiKey = '439c478a771f35c05022f9feabcca01c'; // public dev key
-    const path = mediaType === 'tv' ? 'tv' : 'movie';
+    const path = mediaType === 'tv' || mediaType === 'anime' ? 'tv' : 'movie';
     const url = `https://api.themoviedb.org/3/${path}/${tmdbId}?api_key=${apiKey}`;
     try {
         const data = await fetch(url).then((r) => {
             if (!r.ok) throw new Error(`TMDB ${r.status}`);
             return r.json();
         });
-        const title = mediaType === 'tv' ? data.name : data.title;
-        const date = mediaType === 'tv' ? data.first_air_date : data.release_date;
+        const isTv = mediaType === 'tv' || mediaType === 'anime';
+        const title = isTv ? data.name : data.title;
+        const originalTitle = isTv ? data.original_name : data.original_title;
+        const date = isTv ? data.first_air_date : data.release_date;
         const year = date ? parseInt(date.substring(0, 4), 10) : null;
-        return { title, year };
+        return {
+            title,
+            originalTitle: originalTitle || title,
+            originalLanguage: data.original_language || null,
+            year,
+        };
     } catch (e) {
         console.error('[HDRezka] TMDB lookup failed:', e.message);
-        return { title: null, year: null };
+        return { title: null, originalTitle: null, originalLanguage: null, year: null };
     }
 }
 

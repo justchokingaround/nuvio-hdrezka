@@ -11,17 +11,52 @@
 import { BASE_URL, fetchText } from './http.js';
 
 /**
- * Search HDRezka for `title` and return a list of candidate results.
+ * Search HDRezka for `title` and `originalTitle` (and with the year appended)
+ * and return a list of candidate results.
+ *
+ * Searching with the year is essential for short/common titles like "Брат", where
+ * a plain "Брат" query returns unrelated newer titles.
+ *
  * Each result: { id, url, title, year, type: 'movie' | 'tv' }.
- * Sorted by best match (year + type match preferred).
  */
-export async function searchHdrezka(title, year, mediaType) {
-    const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(title)}`;
-    const html = await fetchText(url);
+export async function searchHdrezka(title, originalTitle, year, mediaType) {
+    const seenUrls = new Set();
+    const all = [];
 
+    const baseQueries = [
+        originalTitle,
+        title,
+    ].filter(Boolean);
+
+    const queries = [];
+    for (const q of baseQueries) {
+        queries.push(q);
+        if (year) queries.push(`${q} ${year}`);
+    }
+
+    for (const query of queries) {
+        const url = `${BASE_URL}/engine/ajax/search.php?q=${encodeURIComponent(query)}`;
+        let html;
+        try {
+            html = await fetchText(url);
+        } catch (e) {
+            console.error(`[HDRezka] search failed for "${query}": ${e.message}`);
+            continue;
+        }
+
+        for (const c of parseSearchHtml(html)) {
+            if (!seenUrls.has(c.url)) {
+                seenUrls.add(c.url);
+                all.push(c);
+            }
+        }
+    }
+
+    return rankCandidates(all, { title, originalTitle, year, mediaType });
+}
+
+function parseSearchHtml(html) {
     const candidates = [];
-    // Each result entry:
-    //   <a href="<url>"><span class="enty">Title</span> Original (2024)</a>
     const re =
         /<a href="([^"]+)"><span class="enty">([^<]+)<\/span>[^<]*?\(([^)]+)\)/g;
     let m;
@@ -30,10 +65,9 @@ export async function searchHdrezka(title, year, mediaType) {
         const itemTitle = m[2].trim();
         const itemYearRaw = m[3].trim();
 
-        // Extract a 4-digit year from the parenthetical.
         const yearMatch = itemYearRaw.match(/(\d{4})/);
         const itemYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
-        const itemType = itemUrl.includes('/series/')
+        const itemType = itemUrl.includes('/series/') || itemUrl.includes('/animation/')
             ? 'tv'
             : itemUrl.includes('/films/')
               ? 'movie'
@@ -48,26 +82,36 @@ export async function searchHdrezka(title, year, mediaType) {
             type: itemType,
         });
     }
-
-    return rankCandidates(candidates, { title, year, mediaType });
+    return candidates;
 }
 
-/**
- * Score each candidate and return descending. Exact year + type match wins.
- * Falls back to the first result if nothing matches perfectly.
- */
-function rankCandidates(candidates, { title, year, mediaType }) {
+function rankCandidates(candidates, { title, originalTitle, year, mediaType }) {
     if (candidates.length === 0) return [];
 
-    const norm = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    const norm = (s) =>
+        (s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 
-    const targetType = mediaType === 'tv' ? 'tv' : 'movie';
+    const targetType = mediaType === 'tv' || mediaType === 'anime' ? 'tv' : 'movie';
+    const normalizedTargets = [title, originalTitle]
+        .filter(Boolean)
+        .map(norm)
+        .filter(Boolean);
+
     const scored = candidates.map((c) => {
         let score = 0;
         if (c.type === targetType) score += 10;
-        if (year && c.year === year) score += 20;
-        if (norm(c.title) === norm(title)) score += 30;
-        else if (norm(c.title).includes(norm(title))) score += 5;
+        if (year && c.year === year) score += 50;
+
+        const normalizedTitle = norm(c.title);
+        for (const t of normalizedTargets) {
+            if (normalizedTitle === t) {
+                score += 40;
+                break;
+            }
+            if (normalizedTitle.includes(t) || t.includes(normalizedTitle)) {
+                score += 8;
+            }
+        }
         return { c, score };
     });
 

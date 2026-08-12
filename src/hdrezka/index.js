@@ -14,17 +14,27 @@ import { getStreams as extractStreams } from './extractor.js';
 export async function getStreams(tmdbId, mediaType, season, episode) {
     try {
         console.log(`[HDRezka] ${mediaType} ${tmdbId} S${season ?? '-'}E${episode ?? '-'}`);
-        return await extractStreams(tmdbId, mediaType, season, episode);
-    } catch (error) {
-        console.error('[HDRezka] getStreams failed:', error.message);
-        // Surface the crash in Nuvio's Test Provider / source list so we can
-        // see what's missing in the Hermes runtime. Remove once fixed.
+        const streams = await extractStreams(tmdbId, mediaType, season, episode);
+        if (streams.length > 0) return streams;
+        // Diagnostic: show what Nuvio passed so we can tell if the Test Provider
+        // sends real tmdbIds or if the scrape simply returned no results.
         return [
             {
-                name: 'HDRezka-ERR',
-                title: `ERR: ${error.message || error}`,
-                url: 'https://example.com/diagnostic.mp4',
-                quality: 'crash',
+                name: 'HDRezka-DIAG',
+                title: `DIAG tmdb=${tmdbId || 'empty'} type=${mediaType || 'empty'} S${season ?? '-'}E${episode ?? '-'}`,
+                url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                quality: 'diagnostic',
+            },
+        ];
+    } catch (error) {
+        const msg = `${error.message || error}`.replace(/\s+/g, ' ').trim();
+        console.error('[HDRezka] getStreams failed:', msg);
+        return [
+            {
+                name: `HDRezka-ERR: ${msg.slice(0, 70)}`,
+                title: `ERR: ${msg}`,
+                url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                quality: `${mediaType} ${tmdbId} S${season ?? '-'}E${episode ?? '-'}`,
             },
         ];
     }
