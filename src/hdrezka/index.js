@@ -17,6 +17,15 @@ export async function getStreams(tmdbId, mediaType, season, episode) {
         return await extractStreams(tmdbId, mediaType, season, episode);
     } catch (error) {
         console.error('[HDRezka] getStreams failed:', error.message);
-        return [];
+        // Surface the crash in Nuvio's Test Provider / source list so we can
+        // see what's missing in the Hermes runtime. Remove once fixed.
+        return [
+            {
+                name: 'HDRezka-ERR',
+                title: `ERR: ${error.message || error}`,
+                url: 'https://example.com/diagnostic.mp4',
+                quality: 'crash',
+            },
+        ];
     }
 }

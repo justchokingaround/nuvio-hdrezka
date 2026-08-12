@@ -725,7 +725,14 @@ function getStreams2(tmdbId, mediaType, season, episode) {
       return yield getStreams(tmdbId, mediaType, season, episode);
     } catch (error) {
       console.error("[HDRezka] getStreams failed:", error.message);
-      return [];
+      return [
+        {
+          name: "HDRezka-ERR",
+          title: `ERR: ${error.message || error}`,
+          url: "https://example.com/diagnostic.mp4",
+          quality: "crash"
+        }
+      ];
     }
   });
 }
