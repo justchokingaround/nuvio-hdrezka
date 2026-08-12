@@ -1,0 +1,18 @@
+[
+  {
+    "id": "hdrezka",
+    "name": "HDRezka",
+    "description": "Stream URLs from HDRezka (hdrezka-home.tv). Translates TMDB IDs to HDRezka pages, scrapes the page, and pulls direct CDN links.",
+    "version": "0.1.0",
+    "author": "nuvio-hdrezka",
+    "supportedTypes": ["movie", "tv"],
+    "filename": "providers/hdrezka.js",
+    "enabled": true,
+    "logo": "https://hdrezka-home.tv/templates/school/images/logo.png",
+    "contentLanguage": ["en", "ru"],
+    "formats": ["mp4", "m3u8"],
+    "limited": false,
+    "disabledPlatforms": [],
+    "supportsExternalPlayer": true
+  }
+]
