@@ -76,7 +76,7 @@ if [ "$TUNNEL_PROVIDER" = "ngrok" ]; then
   npx -y ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null 2>&1 || true
 
   echo "Starting ngrok tunnel (https://${NGROK_DOMAIN})..."
-  npx -y ngrok http "${PORT}" --domain="${NGROK_DOMAIN}" --log=stdout &
+  npx -y ngrok http "${PORT}" --url="https://${NGROK_DOMAIN}" --log=stdout &
   TUNNEL_PID=$!
 
 elif [ "$TUNNEL_PROVIDER" = "cloudflare" ]; then
