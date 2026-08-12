@@ -15,24 +15,20 @@
  * Note on X-Real-Ip: HDRezka's Anubis binds JWTs to X-Real-Ip. Set a fixed
  * value here so every request on the session asserts the same IP; the
  * server's JWT restriction is SHA-256(X-Real-Ip). For a Nuvio provider
- * running on the user's device, the connecting IP is consistent across
  * the session, so the user's real IP works equally well — but using a
  * fixed self-asserted value makes the flow robust to mobile network
  * handovers.
  */
 
-const BASE_URL = 'https://hdrezka-home.tv';
+const BASE_URL = 'https://hdrezka.website';
 
 const HEADERS = {
     'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'X-Hdrezka-Android-App': '1',
-    'X-Hdrezka-Android-App-Version': '2.2.0',
     'Accept':
         'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.5',
     'Connection': 'keep-alive',
-    'X-Real-Ip': '1.2.3.4',
 };
 
 /**

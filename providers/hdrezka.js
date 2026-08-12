@@ -61,15 +61,12 @@ __export(hdrezka_exports, {
 module.exports = __toCommonJS(hdrezka_exports);
 
 // src/hdrezka/http.js
-var BASE_URL = "https://hdrezka-home.tv";
+var BASE_URL = "https://hdrezka.website";
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "X-Hdrezka-Android-App": "1",
-  "X-Hdrezka-Android-App-Version": "2.2.0",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.5",
-  "Connection": "keep-alive",
-  "X-Real-Ip": "1.2.3.4"
+  "Connection": "keep-alive"
 };
 var cookieJar = /* @__PURE__ */ new Map();
 function jarGet(host) {
