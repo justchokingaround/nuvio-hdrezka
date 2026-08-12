@@ -65,6 +65,7 @@ trap cleanup EXIT
 # If an addon is already listening on the port, reuse it.
 if curl -sf -o /dev/null "http://127.0.0.1:${PORT}/manifest.json"; then
   echo "An addon is already running on http://127.0.0.1:${PORT}; reusing it."
+  echo "If it is an old process, stop it first: pkill -f \"node addon.js\""
   ADDON_PID=""
 else
   echo "Starting Stremio addon (http://127.0.0.1:${PORT})..."
