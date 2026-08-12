@@ -314,22 +314,71 @@ function encodeBase64(str) {
     if (typeof btoa !== 'undefined') {
         return btoa(str);
     }
-    // Node fallback
+    // Node fallback; won't run in Nuvio's Hermes runtime.
     return Buffer.from(str, 'utf-8').toString('base64');
 }
 
+/**
+ * Decode a base64 string into a UTF-8 text. Works on Hermes even when
+ * `atob` or `TextDecoder` are unavailable by using a tiny manual decoder.
+ */
 function decodeBase64Utf8(str) {
-    let raw;
+    let bytes;
     if (typeof atob !== 'undefined') {
-        raw = atob(str);
-    } else {
-        raw = Buffer.from(str, 'base64').toString('binary');
-    }
-    // Decode UTF-8 bytes. Nuvio Hermes has TextDecoder.
-    if (typeof TextDecoder !== 'undefined') {
-        const bytes = new Uint8Array(raw.length);
+        const raw = atob(str);
+        bytes = new Uint8Array(raw.length);
         for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    } else if (typeof Buffer !== 'undefined') {
+        bytes = Buffer.from(str, 'base64');
+    } else {
+        // Pure JS base64 decode.
+        const map = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        const out = [];
+        let b = 0;
+        let bits = 0;
+        for (let i = 0; i < str.length; i++) {
+            const c = str.charAt(i);
+            if (c === '=') break;
+            const v = map.indexOf(c);
+            if (v === -1) continue;
+            b = (b << 6) | v;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out.push((b >> bits) & 0xff);
+            }
+        }
+        bytes = new Uint8Array(out);
+    }
+
+    if (typeof TextDecoder !== 'undefined') {
         return new TextDecoder('utf-8').decode(bytes);
     }
-    return raw;
+    // Manual UTF-8 decode.
+    let out = '';
+    for (let i = 0; i < bytes.length; i++) {
+        const c = bytes[i];
+        if (c < 0x80) out += String.fromCharCode(c);
+        else if ((c & 0xe0) === 0xc0) {
+            out += String.fromCharCode(((c & 0x1f) << 6) | (bytes[i + 1] & 0x3f));
+            i += 1;
+        } else if ((c & 0xf0) === 0xe0) {
+            out += String.fromCharCode(
+                ((c & 0x0f) << 12) |
+                ((bytes[i + 1] & 0x3f) << 6) |
+                (bytes[i + 2] & 0x3f),
+            );
+            i += 2;
+        } else if ((c & 0xf8) === 0xf0) {
+            let code =
+                ((c & 0x07) << 18) |
+                ((bytes[i + 1] & 0x3f) << 12) |
+                ((bytes[i + 2] & 0x3f) << 6) |
+                (bytes[i + 3] & 0x3f);
+            code -= 0x10000;
+            out += String.fromCharCode(0xd800 + (code >> 10), 0xdc00 + (code & 0x3ff));
+            i += 3;
+        }
+    }
+    return out;
 }

@@ -19,22 +19,13 @@
  */
 
 import { HEADERS, BASE_URL, jarSet, hostFromUrl, cookieJar } from './http.js';
+import { sha256Hex } from './sha256.js';
 
 const ANUBIS_BASE = '/.within.website/x/cmd/anubis';
 const PASS_PATH = `${ANUBIS_BASE}/api/pass-challenge`;
 
-// SHA-256 of an arbitrary string, returned as lowercase hex.
-// Works in both Node 18+ (global `crypto.subtle`) and Hermes (React Native).
-async function sha256Hex(str) {
-    const bytes = new TextEncoder().encode(str);
-    const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
-    const bytes2 = new Uint8Array(hashBuf);
-    let hex = '';
-    for (let i = 0; i < bytes2.length; i++) {
-        hex += bytes2[i].toString(16).padStart(2, '0');
-    }
-    return hex;
-}
+// SHA-256 is implemented in pure JS (no crypto.subtle / TextEncoder)
+// so it runs inside Nuvio's Hermes runtime.
 
 /**
  * Parse the challenge JSON embedded in the Anubis challenge page.
