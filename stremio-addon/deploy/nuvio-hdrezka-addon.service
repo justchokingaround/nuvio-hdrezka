@@ -1,0 +1,16 @@
+[Unit]
+Description=HDRezka Stremio addon + tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nuvio-hdrezka/stremio-addon
+EnvironmentFile=/opt/nuvio-hdrezka/stremio-addon/.env
+ExecStart=/bin/bash /opt/nuvio-hdrezka/stremio-addon/start-tunnel.sh
+Restart=always
+RestartSec=5
+# Runs as root by default; create a dedicated user if you prefer.
+
+[Install]
+WantedBy=multi-user.target
