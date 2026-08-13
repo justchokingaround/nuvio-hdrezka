@@ -18,27 +18,46 @@ const builder = addonBuilder({
     description: 'Streams from HDRezka (hdrezka.website).',
     resources: ['stream'],
     types: ['movie', 'series'],
-    idPrefixes: ['tt', 'tmdb:'],
+    idPrefixes: ['tt', 'tmdb:', 'imdb:', 'meteor:'],
     catalogs: [],
 });
 
 builder.defineStreamHandler(async (args) => {
     const { type, id } = args;
-    // Stremio usually passes IMDb IDs: "tt0434706" for movies or
-    // "tt0434706:1:1" for series. Some Nuvio setups pass "tmdb:603".
+    // Accept every ID shape Nuvio/Stremio can throw at us:
+    //   tt0434706                (Stremio IMDb)
+    //   tt0434706:1:1            (Stremio series)
+    //   tmdb:603                 (Nuvio TMDB)
+    //   tmdb:1396:1:1            (Nuvio TMDB series)
+    //   imdb:tt0434706           (Nuvio IMDb)
+    //   meteor:media:imdb:tt0434706 (Nuvio IMDb, old format)
+    //   603                      (bare TMDB id)
     let tmdbId;
     let season = null;
     let episode = null;
-    if (id.startsWith('tt')) {
-        const parts = id.split(':');
-        tmdbId = parts[0];
-        season = parts[1] ? parseInt(parts[1], 10) : null;
-        episode = parts[2] ? parseInt(parts[2], 10) : null;
-    } else if (id.startsWith('tmdb:')) {
-        const parts = id.split(':');
-        tmdbId = parts[1];
-        season = parts[2] ? parseInt(parts[2], 10) : null;
-        episode = parts[3] ? parseInt(parts[3], 10) : null;
+
+    const parts = id.split(':');
+    const ttIndex = parts.findIndex((p) => /^tt\d+$/i.test(p));
+    const tmdbIndex = parts.findIndex((p) => /^tmdb$/i.test(p));
+
+    if (ttIndex !== -1) {
+        tmdbId = parts[ttIndex];
+        season = parts[ttIndex + 1] && /^\d+$/.test(parts[ttIndex + 1])
+            ? parseInt(parts[ttIndex + 1], 10)
+            : null;
+        episode = parts[ttIndex + 2] && /^\d+$/.test(parts[ttIndex + 2])
+            ? parseInt(parts[ttIndex + 2], 10)
+            : null;
+    } else if (tmdbIndex !== -1) {
+        tmdbId = parts[tmdbIndex + 1];
+        season = parts[tmdbIndex + 2] && /^\d+$/.test(parts[tmdbIndex + 2])
+            ? parseInt(parts[tmdbIndex + 2], 10)
+            : null;
+        episode = parts[tmdbIndex + 3] && /^\d+$/.test(parts[tmdbIndex + 3])
+            ? parseInt(parts[tmdbIndex + 3], 10)
+            : null;
+    } else if (/^\d+$/.test(id.trim())) {
+        tmdbId = id.trim();
     } else {
         return { streams: [] };
     }
